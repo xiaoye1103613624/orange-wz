@@ -189,6 +189,16 @@ public class WzPngProperty extends WzImageProperty {
         image = null;
     }
 
+    /**
+     * 释放图片占用的堆内存（解码后的 BufferedImage 和压缩字节数组）。
+     * 调用后可通过重新解析 WZ 文件恢复数据（延迟加载）。
+     * 适用于批量操作时释放已完成处理的图片内存。
+     */
+    public void clearMemory() {
+        image = null;
+        compressedBytes = null;
+    }
+
     // Getter ----------------------------------------------------------------------------------------------------------
     public BufferedImage getImage(boolean saveInMem) {
         if (image == null) {

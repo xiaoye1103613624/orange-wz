@@ -277,6 +277,28 @@ public final class BinaryReader {
         };
     }
 
+    /**
+     * 获取底层 ByteBuffer 的只读视图，用于零拷贝操作（如直接计算校验和）。
+     * 调用者不应修改 buffer 内容。
+     */
+    public ByteBuffer getBuffer() {
+        return buffer.asReadOnlyBuffer();
+    }
+
+    /**
+     * 直接从内存映射 ByteBuffer 计算文件校验和（所有字节的无符号和），
+     * 避免 {@link #output()} 产生的完整堆拷贝，显著降低大文件解析时的内存峰值。
+     */
+    public int computeChecksum() {
+        int checksum = 0;
+        ByteBuffer buf = buffer.duplicate();
+        buf.position(0);
+        while (buf.hasRemaining()) {
+            checksum += (buf.get() & 0xFF);
+        }
+        return checksum;
+    }
+
     /* Output --------------------------------------------------------------------------------------------------------*/
     public byte[] output() {
         ByteBuffer result = buffer.duplicate();

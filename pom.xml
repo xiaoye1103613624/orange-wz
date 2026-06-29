@@ -16,6 +16,9 @@
 
     <properties>
         <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
     </properties>
     <dependencies>
         <dependency>
@@ -85,8 +88,17 @@
                         <path>
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
+                            <version>1.18.42</version>
                         </path>
                     </annotationProcessorPaths>
+                    <annotationProcessorPathsUseDepMgmt>true</annotationProcessorPathsUseDepMgmt>
+                    <!-- 注：原先排除 gui/** 不生效（javac 通过 sourcepath 隐式编译被引用的 gui 类，
+                         但隐式编译的源文件不会执行注解处理器），导致 Lombok 生成的 getter 缺失而编译失败。
+                         直接全量编译以保证 Lombok 正常处理。 -->
+                    <!-- Xml2Img2.java 是孤立的废弃文件，引用了 Xml2Img 中不存在的方法，无其他代码引用它 -->
+                    <excludes>
+                        <exclude>**/Xml2Img2.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>

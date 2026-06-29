@@ -19,7 +19,7 @@ import static orange.wz.provider.WzAESConstant.DEFAULT_KEY;
 import static orange.wz.provider.WzAESConstant.WZ_GMS_IV;
 
 @Slf4j
-public class Xml2Img {
+public class Xml2Img2 {
 
     private static final String INPUT_DIR = "D:\\Code\\maplefire\\maplefire-reborn-game-data";
     private static final String OUTPUT_DIR = "D:\\MapleStory\\MaplefireReborn\\Data3";

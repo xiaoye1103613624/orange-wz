@@ -12,6 +12,7 @@ import orange.wz.gui.component.form.impl.CanvasForm;
 import orange.wz.gui.component.key.KeyBox;
 import orange.wz.gui.component.key.KeyManager;
 import orange.wz.gui.component.panel.CenterPane;
+import orange.wz.gui.component.panel.EditPane;
 import orange.wz.gui.utils.UrlUtil;
 import orange.wz.manager.ServerManager;
 import orange.wz.provider.tools.wzkey.WzKey;
@@ -236,10 +237,25 @@ public class MainFrame extends JFrame {
         JPanel statusBar = new JPanel(new BorderLayout());
         statusBar.setBorder(BorderFactory.createEtchedBorder());
 
-        // 进度条
+        // 进度条 + 取消按钮
+        JPanel westPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        JButton cancelBtn = new JButton(i18n.get("status.cancel"));
+        cancelBtn.setEnabled(false);
+        cancelBtn.addActionListener(e -> {
+            CenterPane centerPane = getCenterPane();
+            if (centerPane != null) {
+                EditPane left = centerPane.getLeftEditPane();
+                EditPane right = centerPane.getRightEditPane();
+                if (left != null) left.cancelAllWorkers();
+                if (right != null) right.cancelAllWorkers();
+            }
+            cancelBtn.setEnabled(false);
+        });
+        westPanel.add(cancelBtn);
         progressBar = new JProgressBar(0, 100);
         progressBar.setStringPainted(true);
-        statusBar.add(progressBar, BorderLayout.WEST);
+        westPanel.add(progressBar);
+        statusBar.add(westPanel, BorderLayout.WEST);
 
         // 状态文字
         statusLabel = new JLabel(i18n.get("status.ready"));

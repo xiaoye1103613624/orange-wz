@@ -39,11 +39,8 @@ public class WzImageFile extends WzImage implements WzSavableFile {
         BinaryReader reader = new BinaryReader(filePath, iv, key);
         super.setReader(reader);
         super.setDataSize(reader.getDataSize());
-        super.setChecksum(0);
-        byte[] bytes = reader.output();
-        for (byte b : bytes) {
-            super.addChecksum(b);
-        }
+        // 直接从内存映射 ByteBuffer 计算校验和，避免复制整个文件到堆内存
+        super.setChecksum(reader.computeChecksum());
         super.setOffset(0);
         return super.parse(realParse);
     }

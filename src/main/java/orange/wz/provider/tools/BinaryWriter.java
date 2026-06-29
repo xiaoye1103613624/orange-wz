@@ -5,9 +5,13 @@ import lombok.Setter;
 import orange.wz.provider.WzAESConstant;
 import orange.wz.provider.WzDirectoryType;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -267,6 +271,18 @@ public final class BinaryWriter {
         encOffset = Integer.rotateLeft(encOffset, encOffset & 0x1F);
         int writeOffset = (int) (encOffset ^ (value - (dataStartPos * 2)));
         putInt(writeOffset);
+    }
+
+    /**
+     * 直接写入文件，避免 {@link #output()} 产生的中间 byte[] 拷贝。
+     * 适用于大文件保存，内存峰值降低约一半。
+     */
+    public long writeToFile(Path path) throws IOException {
+        buffer.flip();
+        try (FileChannel channel = FileChannel.open(path,
+                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            return channel.write(buffer);
+        }
     }
 
     /* Output --------------------------------------------------------------------------------------------------------*/

@@ -38,7 +38,9 @@ public class WzChildrenProperty {
     }
 
     public void add(List<WzImageProperty> children) {
-        properties.addAll(children);
+        synchronized (properties) {
+            properties.addAll(children);
+        }
     }
 
     public boolean remove(String name) {

@@ -90,6 +90,24 @@ public final class FileTool {
         }
     }
 
+    /**
+     * 使用 BinaryWriter 的零拷贝写入，避免中间 byte[] 分配。
+     * 适用于大文件（如 UI/Login.img、UI/UIWindow.img）。
+     */
+    public static boolean saveFile(Path path, BinaryWriter writer) {
+        try {
+            Path parentDir = path.getParent();
+            if (parentDir != null && !Files.exists(parentDir)) {
+                Files.createDirectories(parentDir);
+            }
+            writer.writeToFile(path);
+            return true;
+        } catch (IOException ex) {
+            log.error("保存文件失败 {} : {}", path, ex.getMessage());
+            return false;
+        }
+    }
+
     public static byte[] readFile(Path path) {
         try (InputStream in = Files.newInputStream(path)) {
             return in.readAllBytes();

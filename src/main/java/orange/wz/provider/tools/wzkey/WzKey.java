@@ -45,4 +45,16 @@ public class WzKey {
     public void setUserKeyBase64(String userKeyBase64) {
         this.userKey = Base64.getDecoder().decode(userKeyBase64);
     }
+
+    // 显式 getter，防止 Lombok 注解处理未生效时编译失败
+    public Integer getId() { return id; }
+    public String getName() { return name; }
+    public byte[] getIv() { return iv; }
+    public byte[] getUserKey() { return userKey; }
+    public boolean isSelected() { return selected; }
+    public void setId(Integer id) { this.id = id; }
+    public void setName(String name) { this.name = name; }
+    public void setIv(byte[] iv) { this.iv = iv; }
+    public void setUserKey(byte[] userKey) { this.userKey = userKey; }
+    public void setSelected(boolean selected) { this.selected = selected; }
 }

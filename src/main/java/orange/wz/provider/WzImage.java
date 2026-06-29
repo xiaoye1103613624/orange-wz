@@ -122,22 +122,21 @@ public class WzImage extends WzObject {
             writer.setWzMutableKey(reader.getWzMutableKey());
             save(writer);
 
-            byte[] context = writer.output();
             if (this instanceof WzImageFile) {
                 clear();
             }
             String filePath = path.toString();
             Path savePath = Path.of(filePath + ".bak");
-            if (FileTool.saveFile(savePath, context)) {
+            // 直接流式写入文件，跳过 output() 的中间 byte[] 拷贝
+            if (FileTool.saveFile(savePath, writer)) {
+                writer = null; // 尽早释放 Writer 内部缓冲区
                 for (int i = 0; i < 10; i++) {
                     try {
                         FileTool.moveAndReplace(savePath, Path.of(filePath));
                         log.info("{} 已保存", getName());
                         return true;
                     } catch (IOException e) {
-                        if (i == 0) {
-                            System.gc();
-                        } else if (i == 9) {
+                        if (i == 9) {
                             log.error("{} 替换 {} 失败: {}", savePath, Path.of(filePath), e.getMessage());
                         } else {
                             log.warn("{} 处于被占用的状态，如果你运行的游戏客户端在使用该文件，请立刻关闭。第 {}/10 次尝试", getName(), i + 1);

@@ -264,15 +264,29 @@ public class WzDirectory extends WzObject {
     }
 
     public void parseAllImagesForChangeKey(WzMutableKey wzMutableKey) {
-        children.getDirectories().forEach(wzDir -> wzDir.parseAllImagesForChangeKey(wzMutableKey));
-        children.getImages().forEach(image -> {
-            if (!image.parse()) {
-                log.error("文件 {} 解析失败", name);
-                throw new RuntimeException();
-            }
-            image.rebuildCompressedForPngBelongListWz(image.getChildren(), wzMutableKey);
-            image.setChanged(true); // 确保保存的时候重新写入，而不是取原来的
-        });
+        List<WzImage> allImages = new java.util.ArrayList<>();
+        collectAllImages(allImages);
+
+        int parallelism = Math.max(1, Runtime.getRuntime().availableProcessors());
+        java.util.concurrent.ForkJoinPool pool = new java.util.concurrent.ForkJoinPool(parallelism);
+        try {
+            pool.submit(() -> allImages.parallelStream().forEach(image -> {
+                if (!image.parse()) {
+                    log.error("文件 {} 解析失败", image.getName());
+                    throw new RuntimeException();
+                }
+                image.rebuildCompressedForPngBelongListWz(image.getChildren(), wzMutableKey);
+                image.setChanged(true); // 确保保存的时候重新写入，而不是取原来的
+            })).join();
+        } finally {
+            pool.shutdown();
+        }
+    }
+
+    // 递归收集本目录及所有子目录下的 WzImage（用于并行密钥转换）
+    private void collectAllImages(List<WzImage> collector) {
+        children.getDirectories().forEach(wzDir -> wzDir.collectAllImages(collector));
+        collector.addAll(children.getImages());
     }
 
     // DeepClone -------------------------------------------------------------------------------------------------------

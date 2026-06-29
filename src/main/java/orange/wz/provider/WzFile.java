@@ -204,10 +204,11 @@ public final class WzFile extends WzObject implements WzSavableFile {
             wzDirectory.saveImages(writer, tempWriter);
             writer.getStringCache().clear();
             log.info("保存 {} Wz 写入文件 4/4", getName());
-            byte[] context = writer.output();
             reader = null;
             clear();
-            if (FileTool.saveFile(savePath, context)) {
+            // 零拷贝写入，跳过中间 byte[] 分配
+            if (FileTool.saveFile(savePath, writer)) {
+                writer = null; // 尽早释放 Writer 内部缓冲区
                 setNewFile(false);
                 for (int i = 0; i < 10; i++) {
                     try {
@@ -215,9 +216,7 @@ public final class WzFile extends WzObject implements WzSavableFile {
                         log.info("{} 已保存", getName());
                         return true;
                     } catch (IOException e) {
-                        if (i == 0) {
-                            System.gc();
-                        } else if (i == 9) {
+                        if (i == 9) {
                             log.error("{} 替换 {} 失败: {}", savePath, Path.of(filePath), e.getMessage());
                         } else {
                             log.warn("{} 处于被占用的状态，如果你运行的游戏客户端在使用该文件，请立刻关闭。第 {}/10 次尝试", getName(), i + 1);

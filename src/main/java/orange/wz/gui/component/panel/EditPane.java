@@ -38,8 +38,9 @@ import java.util.regex.Pattern;
 import static orange.wz.gui.Icons.*;
 
 @Getter
-@Slf4j
+// @Slf4j 生成的 log 字段与 Container.log 冲突，改用显式声明
 public final class EditPane extends JSplitPane {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(EditPane.class);
     private static final Pattern INDEXED_NODE_SEGMENT = Pattern.compile("^(.*)\\[(\\d+)]$");
 
     private JTree tree;
@@ -133,6 +134,37 @@ public final class EditPane extends JSplitPane {
 
     public LuaForm getLuaForm() {
         return (LuaForm) nodeForms.get("lua");
+    }
+
+    /** 正在执行的后台任务列表，用于支持取消操作 */
+    private final List<SwingWorker<?, ?>> activeWorkers = new ArrayList<>();
+
+    /**
+     * 取消所有正在执行的后台任务（如批量导出、转换等）。
+     * 每个 Worker 的 doInBackground() 中会检查 isCancelled() 并提前退出。
+     */
+    public void cancelAllWorkers() {
+        synchronized (activeWorkers) {
+            for (SwingWorker<?, ?> w : activeWorkers) {
+                if (!w.isDone()) {
+                    w.cancel(true);
+                }
+            }
+            activeWorkers.clear();
+        }
+        MainFrame.getInstance().setStatusText("操作已取消");
+    }
+
+    private void trackWorker(SwingWorker<?, ?> worker) {
+        synchronized (activeWorkers) {
+            activeWorkers.add(worker);
+        }
+    }
+
+    private void untrackWorker(SwingWorker<?, ?> worker) {
+        synchronized (activeWorkers) {
+            activeWorkers.remove(worker);
+        }
     }
 
     public EditPane(boolean oneTouchExpandable) {
@@ -1710,10 +1742,11 @@ public final class EditPane extends JSplitPane {
 
         MainFrame.getInstance().setStatusText(MainFrame.i18n.get("status.file_saving"));
         MainFrame.getInstance().updateProgress(0, 0);
-        new SwingWorker<>() {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 for (TreePath treePath : treePaths) {
+                    if (isCancelled()) return null;
                     DefaultMutableTreeNode node = (DefaultMutableTreeNode) treePath.getLastPathComponent();
                     WzObject wzObject = (WzObject) node.getUserObject();
                     if (wzObject instanceof WzFolder) {
@@ -1726,15 +1759,18 @@ public final class EditPane extends JSplitPane {
                     }
                 }
 
-                clear();
+                if (!isCancelled()) clear();
                 return null;
             }
 
             @Override
             protected void done() {
+                if (isCancelled()) return;
                 MainFrame.getInstance().setStatusText(MainFrame.i18n.get("status.file_saved"));
             }
-        }.execute();
+        };
+        trackWorker(worker);
+        worker.execute();
     }
 
     /**
@@ -1912,7 +1948,7 @@ public final class EditPane extends JSplitPane {
         }
 
         Instant now = Instant.now();
-        new SwingWorker<>() {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0007"));
@@ -1920,6 +1956,7 @@ public final class EditPane extends JSplitPane {
                 int finish = 0;
                 List<Pair<WzImage, Path>> collector = new ArrayList<>();
                 for (TreePath treePath : selectedPaths) {
+                    if (isCancelled()) return null;
                     DefaultMutableTreeNode node = (DefaultMutableTreeNode) treePath.getLastPathComponent();
                     collectExportImg(node, folder.toPath(), collector);
                     MainFrame.getInstance().updateProgress(++finish, total);
@@ -1929,6 +1966,7 @@ public final class EditPane extends JSplitPane {
                 finish = 0;
                 MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0008"));
                 for (Pair<WzImage, Path> pair : collector) {
+                    if (isCancelled()) return null;
                     WzImage wzImage = pair.getLeft();
                     Path path = pair.getRight();
                     wzImage.save(path);
@@ -1939,15 +1977,18 @@ public final class EditPane extends JSplitPane {
 
             @Override
             protected void done() {
+                if (isCancelled()) return;
                 try {
                     get();
                     Instant end = Instant.now();
                     MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0009", Duration.between(now, end).toSeconds()));
                 } catch (Exception ex) {
-                    throw new RuntimeException(ex);
+                    log.error("exportImg 异常", ex);
                 }
             }
-        }.execute();
+        };
+        trackWorker(worker);
+        worker.execute();
     }
 
     /**
@@ -2003,13 +2044,14 @@ public final class EditPane extends JSplitPane {
 
         Instant now = Instant.now();
 
-        new SwingWorker<>() {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 int total = selectedPaths.length;
                 int finish = 0;
                 List<Pair<WzImage, Path>> collector = new ArrayList<>();
                 for (TreePath treePath : selectedPaths) {
+                    if (isCancelled()) return null;
                     MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0010"));
                     DefaultMutableTreeNode node = (DefaultMutableTreeNode) treePath.getLastPathComponent();
                     collectExportXml(node, Path.of(data.getExportPath()), collector);
@@ -2020,6 +2062,7 @@ public final class EditPane extends JSplitPane {
                 finish = 0;
                 MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0008"));
                 for (Pair<WzImage, Path> pair : collector) {
+                    if (isCancelled()) return null;
                     WzImage wzImage = pair.getLeft();
                     Path path = pair.getRight();
                     if (wzImage.exportToXml(path, data.getIndent(), data.getMeType(), data.isLinux())) {
@@ -2033,15 +2076,18 @@ public final class EditPane extends JSplitPane {
 
             @Override
             protected void done() {
+                if (isCancelled()) return;
                 try {
                     get();
                     Instant end = Instant.now();
                     MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0013", Duration.between(now, end).toSeconds()));
                 } catch (Exception ex) {
-                    throw new RuntimeException(ex);
+                    log.error("exportXml 异常", ex);
                 }
             }
-        }.execute();
+        };
+        trackWorker(worker);
+        worker.execute();
     }
 
     // 修改密钥 ----------------------------------------------------------------------------------------------------------
@@ -2093,11 +2139,12 @@ public final class EditPane extends JSplitPane {
         Instant now = Instant.now();
         MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0016"));
         int total = collector.size();
-        new SwingWorker<>() {
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() {
                 int finish = 0;
                 for (WzObject wzObject : collector) {
+                    if (isCancelled()) return null;
                     if (wzObject instanceof WzFile wzFile) {
                         wzFile.changeKey(keyData.getVersion(), keyData.getName(), keyData.getIv(), keyData.getKey());
                         wzFile.getWzDirectory().setTempChanged(true);
@@ -2107,21 +2154,24 @@ public final class EditPane extends JSplitPane {
                     }
                     MainFrame.getInstance().updateProgress(++finish, total);
                 }
-                tree.updateUI();
                 return null;
             }
 
             @Override
             protected void done() {
+                if (isCancelled()) return;
                 try {
                     get();
+                    tree.updateUI(); // EDT 线程安全操作，从 doInBackground 移到这里
                     Instant end = Instant.now();
                     MainFrame.getInstance().setStatusText(MainFrame.i18n.get("test.temp0017", Duration.between(now, end).toSeconds()));
                 } catch (Exception ex) {
-                    throw new RuntimeException(ex);
+                    log.error("changeKey 异常", ex);
                 }
             }
-        }.execute();
+        };
+        trackWorker(worker);
+        worker.execute();
     }
 
     // 导入--------------------------------------------------------------------------------------------------------------
