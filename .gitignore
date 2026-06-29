@@ -43,3 +43,20 @@ build/
 /keys.dat
 /logs/
 config.ini
+
+# 日志 & 临时文件
+*.log
+mcp_pid.txt
+cp.txt
+
+# WZ 调试中间产物
+*_real.img.xml
+*_current.img.xml
+*_fixed.img
+*_fixed_verify.img.xml
+*_patched.img
+*_orig.img.xml
+*_verify.img.xml
+Consume_*.img
+Consume_*.img.xml
+String_Consume_*.img.xml
