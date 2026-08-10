@@ -1,0 +1,25 @@
+﻿---
+description: After finishing MCP/WZ work, delete temp/log/probe artifacts; do not keep them in the repo
+alwaysApply: true
+---
+
+# No leftover temp files after features
+
+## Mandate
+
+Finish a WZ/MCP/GUI feature → **remove** temporary process files from the orange-wz tree. Do not leave verify dumps, MCP run logs, or one-off probe Java at the repo root.
+
+## Delete (examples)
+
+- Logs: `*.log`, `*.err`, `mcp-*.log`, `mcp_*.log`, `orange-wz-*.log`, `convert_full.log`, `merge_full*.log`
+- WZ scratch at repo root: `0243_*.img`, `*_verify.img.xml`, `Consume_*.img*`, `String_Consume_*`, `_tmp*`
+- One-off probes: `Verify*.java`, `Dump*.java`, `Diagnose*.java`, `tools/*.class`
+
+## Keep
+
+- Production sources under `src/main/java`
+- Intentional long-lived tools already tracked under `tools/` (not underscore scratch)
+
+## Git
+
+Rely on `.gitignore` patterns above so junk is not re-added. Never force-push; never commit `mcp-runtime/` licensed blobs.

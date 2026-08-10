@@ -62,3 +62,29 @@ Consume_*.img.xml
 String_Consume_*.img.xml
 # MCP runtime (licensed/PCM data.bin ~27MB; do not commit)
 /mcp-runtime/
+
+# Extra temp / AI process leftovers
+*.err
+*_build_*.err
+*_build_*.log
+mcp-*.log
+mcp_*.log
+orange-wz-*.log
+_tmp*/
+tmp*/
+*.img
+!**/src/**/*.img
+0202_*.xml
+0243_*.xml
+*_verify*.xml
+Verify*.java
+Dump*.java
+Diagnose*.java
+CompareCardIds.java
+FindBadScale.java
+HasCard.java
+HasEtc.java
+Repack*.java
+Resave*.java
+tools/*.class
+tools/DumpDR.java
