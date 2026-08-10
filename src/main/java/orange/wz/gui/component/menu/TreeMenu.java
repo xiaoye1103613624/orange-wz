@@ -10,6 +10,7 @@ import static orange.wz.gui.Icons.AiOutlineKey;
 import static orange.wz.gui.Icons.AiOutlineReloadIcon;
 
 public class TreeMenu extends JPopupMenu {
+    protected final EditPane editPane;
     protected JMenuItem btnSave;
     protected JMenuItem btnSaveAs;
     protected JMenuItem btnUnload;
@@ -39,6 +40,7 @@ public class TreeMenu extends JPopupMenu {
 
     public TreeMenu(EditPane editPane) {
         super();
+        this.editPane = editPane;
 
         btnSave = new JMenuItem(MainFrame.i18n.get("tree.menu.save"), AiOutlineSaveIcon);
         btnSave.addActionListener(e -> editPane.save());

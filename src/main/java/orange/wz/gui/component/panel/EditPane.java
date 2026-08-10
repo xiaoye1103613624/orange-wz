@@ -155,7 +155,7 @@ public final class EditPane extends JSplitPane {
         MainFrame.getInstance().setStatusText("操作已取消");
     }
 
-    private void trackWorker(SwingWorker<?, ?> worker) {
+    public void trackWorker(SwingWorker<?, ?> worker) {
         synchronized (activeWorkers) {
             activeWorkers.add(worker);
         }
