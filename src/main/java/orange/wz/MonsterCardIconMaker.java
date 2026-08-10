@@ -108,8 +108,8 @@ public class MonsterCardIconMaker {
             // 合成
             BufferedImage composite = compose(cardFrame, mobSprite);
 
-            // 写回 icon（保持原格式和 scale=1）
-            icon.setPng(composite, targetFormat, 1);
+            // 写回 icon（保持原格式；scale 字节 0=1:1，勿写 1 否则客户端 EOF）
+            icon.setPng(composite, targetFormat, 0);
             success++;
         }
 

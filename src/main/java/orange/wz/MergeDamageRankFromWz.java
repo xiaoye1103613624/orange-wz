@@ -82,6 +82,17 @@ public class MergeDamageRankFromWz {
         try {
             if (!srcImg.parse()) return "ERROR:src";
             if (!dstImg.parse()) return "ERROR:dst";
+            WzImageProperty srcDamageRank = srcImg.getChild("DamageRank");
+            if (srcDamageRank != null && dstImg.getChild("DamageRank") != null) {
+                dstImg.removeChild("DamageRank");
+                WzImageProperty clone = srcDamageRank.deepClone(dstImg);
+                if (dstImg.addChild(clone)) {
+                    clone.setWzImage(dstImg);
+                    clone.setChildrenWzImage(dstImg);
+                    return dstImg.save(dstFile) ? "REPLACED:" + srcDamageRank.getChildren().size() : "ERROR:save";
+                }
+                return "ERROR:replace";
+            }
             int added = mergeTopLevel(srcImg, dstImg);
             if (added > 0) return dstImg.save(dstFile) ? "MERGED:" + added : "ERROR:save";
             return dstImg.getChild("DamageRank") != null ? "SKIPPED_SAME" : "SKIPPED_SAME";
@@ -138,7 +149,20 @@ public class MergeDamageRankFromWz {
                 System.out.println("[VERIFY] " + name + " parse fail");
                 return;
             }
-            System.out.println("[VERIFY] " + name + " DamageRank=" + (img.getChild("DamageRank") != null ? "OK" : "MISSING"));
+            WzImageProperty dr = img.getChild("DamageRank");
+            System.out.println("[VERIFY] " + name + " DamageRank=" + (dr != null ? "OK" : "MISSING"));
+            if (dr == null) return;
+            String[] required = {
+                    "backgrndmax", "backgrndmin", "backgrndcenter", "backgrndbottom",
+                    "title1", "title2", "gauge", "BtReset", "BtSwitch", "BtAuto",
+                    "iconCommonAtk", "iconUnknownSkill"
+            };
+            for (String node : required) {
+                System.out.println("[VERIFY]   " + node + "=" + (dr.getChild(node) != null ? "OK" : "MISSING"));
+            }
+            for (WzImageProperty child : dr.getChildren()) {
+                System.out.println("[NODE] " + child.getName());
+            }
         } finally {
             img.unparse();
         }

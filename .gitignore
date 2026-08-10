@@ -60,3 +60,5 @@ cp.txt
 Consume_*.img
 Consume_*.img.xml
 String_Consume_*.img.xml
+# MCP runtime (licensed/PCM data.bin ~27MB; do not commit)
+/mcp-runtime/
