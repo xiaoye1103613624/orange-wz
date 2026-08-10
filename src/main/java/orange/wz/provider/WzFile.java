@@ -179,9 +179,11 @@ public final class WzFile extends WzObject implements WzSavableFile {
             if (status != WzFileStatus.PARSE_SUCCESS) return false;
             log.info("保存 {} 开始", getName());
             Map<String, Integer> tempStringCache = new HashMap<>();
-            BinaryWriter tempWriter = new BinaryWriter();
-            log.info("保存 {} Generate Data File 1/4", getName());
+            BinaryWriter tempWriter = new BinaryWriter(true);
+            log.info("保存 {} 1/4 生成数据文件(含{}个图片)...", getName(), wzDirectory.countImages());
+            long t1 = System.currentTimeMillis();
             wzDirectory.generateDataFile(tempWriter, tempStringCache);
+            log.info("保存 {} 1/4 完成, 耗时{}s", getName(), (System.currentTimeMillis() - t1) / 1000);
             tempStringCache.clear();
             int totalLen = wzDirectory.getImgOffsets(wzDirectory.getOffsets(header.getDataStartPos() + (is64BitWzFile() ? 0 : 2)));
             log.debug("totalLen : {}", totalLen);
@@ -197,13 +199,17 @@ public final class WzFile extends WzObject implements WzSavableFile {
             if (!is64BitWzFile()) {
                 writer.putShort(header.getEncVersion());
             }
-            log.info("保存 {} Wz Dirs 2/4", getName());
+            log.info("保存 {} 2/4 写入目录结构...", getName());
+            long t2 = System.currentTimeMillis();
             wzDirectory.saveDirectory(writer);
+            log.info("保存 {} 2/4 完成, 耗时{}s", getName(), (System.currentTimeMillis() - t2) / 1000);
             writer.getStringCache().clear();
-            log.info("保存 {} Wz Images 3/4", getName());
+            log.info("保存 {} 3/4 写入图片数据(含{}个图片)...", getName(), wzDirectory.countImages());
+            long t3 = System.currentTimeMillis();
             wzDirectory.saveImages(writer, tempWriter);
+            log.info("保存 {} 3/4 完成, 耗时{}s", getName(), (System.currentTimeMillis() - t3) / 1000);
             writer.getStringCache().clear();
-            log.info("保存 {} Wz 写入文件 4/4", getName());
+            log.info("保存 {} 4/4 写入文件...", getName());
             reader = null;
             clear();
             // 零拷贝写入，跳过中间 byte[] 分配
@@ -261,9 +267,13 @@ public final class WzFile extends WzObject implements WzSavableFile {
         wzDirectory.exportToXml(basePath, collector);
     }
 
-    public void changeKey(short gameVersion, String keyBoxName, byte[] iv, byte[] key) {
+    /**
+     * Re-key every image under this WZ. Returns false if the archive cannot be parsed.
+     * Parallel image parse/rebuild is handled inside {@link WzDirectory#parseAllImagesForChangeKey}.
+     */
+    public boolean changeKey(short gameVersion, String keyBoxName, byte[] iv, byte[] key) {
         // 先解析把原有内容解码出来缓存在内存里
-        if (!parse()) return;
+        if (!parse()) return false;
 
         iv = Arrays.copyOf(iv, iv.length);
         key = Arrays.copyOf(key, key.length);
@@ -276,6 +286,9 @@ public final class WzFile extends WzObject implements WzSavableFile {
         this.key = key;
         reader.setWzMutableKey(wzMutableKey);
         header.setFileVersion(gameVersion);
+        // Encrypted sound headers still hold old XOR bytes until rebuilt against the new keystream.
+        wzDirectory.rebuildEncryptedSoundsForChangeKey();
+        return true;
     }
 
     private boolean tryDecode(short encVersion, short fileVersion) {

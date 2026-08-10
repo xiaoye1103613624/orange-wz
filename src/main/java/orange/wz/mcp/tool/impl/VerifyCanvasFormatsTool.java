@@ -5,25 +5,24 @@ import orange.wz.mcp.session.McpSessionManager;
 import orange.wz.mcp.tool.support.BaseSessionTool;
 import orange.wz.mcp.tool.support.ToolParamHelper;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static orange.wz.mcp.tool.support.ToolSchemas.*;
 
-public final class SaveNodeTool extends BaseSessionTool {
+public final class VerifyCanvasFormatsTool extends BaseSessionTool {
     private final McpWorkspaceService service;
 
-    public SaveNodeTool(McpSessionManager sessionManager, McpWorkspaceService service) {
+    public VerifyCanvasFormatsTool(McpSessionManager sessionManager, McpWorkspaceService service) {
         super(sessionManager,
-                "保存指定文件节点。可选 unloadAfterSave（保存后卸载该根）/ clearCache（软释放 PNG 缓存）。",
+                "扫描节点树 canvas 格式。默认标记 ARGB8888（v083 易导致不正确游戏数据）。可用 flagFormats 自定义。",
                 objectSchema(
                         Map.of(
                                 "rootPath", stringSchema(),
                                 "nodePath", stringSchema(),
                                 "autoParse", booleanSchema(),
-                                "unloadAfterSave", booleanSchema(),
-                                "clearCache", booleanSchema()
+                                "maxReport", numberSchema(),
+                                "flagFormats", arraySchema(stringSchema())
                         ),
                         List.of("rootPath")
                 ));
@@ -32,21 +31,25 @@ public final class SaveNodeTool extends BaseSessionTool {
 
     @Override
     public String name() {
-        return "save_node";
+        return "verify_canvas_formats";
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public Map<String, Object> invoke(Map<String, Object> params) {
         var session = session(params);
         boolean autoParse = ToolParamHelper.getBoolean(params, "autoParse", true);
-        boolean unloadAfterSave = ToolParamHelper.getBoolean(params, "unloadAfterSave", false);
-        boolean clearCache = ToolParamHelper.getBoolean(params, "clearCache", false);
-        service.saveNode(session, ToolParamHelper.getNodeReference(params), autoParse, unloadAfterSave, clearCache);
-        Map<String, Object> result = new HashMap<>();
-        result.put("ok", true);
-        result.put("unloadAfterSave", unloadAfterSave);
-        result.put("clearCache", clearCache);
-        result.put("rootCount", session.getRoots().size());
-        return result;
+        int maxReport = ToolParamHelper.getInt(params, "maxReport", 50);
+        Object raw = params.get("flagFormats");
+        List<String> flagFormats = raw instanceof List<?> list
+                ? list.stream().map(String::valueOf).toList()
+                : List.of();
+        return service.verifyCanvasFormats(
+                session,
+                ToolParamHelper.getNodeReference(params),
+                autoParse,
+                maxReport,
+                flagFormats
+        );
     }
 }

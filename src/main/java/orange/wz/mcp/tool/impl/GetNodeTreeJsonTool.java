@@ -15,16 +15,19 @@ public final class GetNodeTreeJsonTool extends BaseSessionTool {
     private final McpWorkspaceService service;
 
     public GetNodeTreeJsonTool(McpSessionManager sessionManager, McpWorkspaceService service) {
-        super(sessionManager, "获取一个或多个节点及其子节点的 JSON 树数据。单次使用 rootPath/nodePath；批量使用 nodes 数组。", objectSchema(
-                Map.of(
-                        "rootPath", stringSchema(),
-                        "nodePath", stringSchema(),
-                        "autoParse", booleanSchema(),
-                        "maxDepth", numberSchema(),
-                        "nodes", arraySchema(nodeReferenceWithReadOptionsSchema())
-                ),
-                List.of()
-        ));
+        super(sessionManager,
+                "获取节点 JSON 树。默认 includePng=false 以避免 bulk 列表时把 canvas 编成 base64 撑爆堆；需要像素时显式传 includePng=true。",
+                objectSchema(
+                        Map.of(
+                                "rootPath", stringSchema(),
+                                "nodePath", stringSchema(),
+                                "autoParse", booleanSchema(),
+                                "maxDepth", numberSchema(),
+                                "includePng", booleanSchema(),
+                                "nodes", arraySchema(nodeReferenceWithReadOptionsSchema())
+                        ),
+                        List.of()
+                ));
         this.service = service;
     }
 
@@ -40,15 +43,17 @@ public final class GetNodeTreeJsonTool extends BaseSessionTool {
         if (params.containsKey("nodes")) {
             boolean defaultAutoParse = ToolParamHelper.getBoolean(params, "autoParse", true);
             int defaultMaxDepth = ToolParamHelper.getInt(params, "maxDepth", 0);
+            boolean defaultIncludePng = ToolParamHelper.getBoolean(params, "includePng", false);
             var results = new ArrayList<Map<String, Object>>(nodes.size());
             for (Map<String, Object> node : nodes) {
                 var reference = ToolParamHelper.getNodeReference(node);
                 boolean autoParse = ToolParamHelper.getBoolean(node, "autoParse", defaultAutoParse);
                 int maxDepth = ToolParamHelper.getInt(node, "maxDepth", defaultMaxDepth);
+                boolean includePng = ToolParamHelper.getBoolean(node, "includePng", defaultIncludePng);
                 results.add(Map.of(
                         "rootPath", reference.rootPath(),
                         "nodePath", reference.nodePath(),
-                        "tree", service.getNodeTreeJson(session, reference, autoParse, maxDepth)
+                        "tree", service.getNodeTreeJson(session, reference, autoParse, maxDepth, includePng)
                 ));
             }
             return Map.of("results", results);
@@ -56,6 +61,7 @@ public final class GetNodeTreeJsonTool extends BaseSessionTool {
 
         boolean autoParse = ToolParamHelper.getBoolean(params, "autoParse", true);
         int maxDepth = ToolParamHelper.getInt(params, "maxDepth", 0);
-        return Map.of("tree", service.getNodeTreeJson(session, ToolParamHelper.getNodeReference(params), autoParse, maxDepth));
+        boolean includePng = ToolParamHelper.getBoolean(params, "includePng", false);
+        return Map.of("tree", service.getNodeTreeJson(session, ToolParamHelper.getNodeReference(params), autoParse, maxDepth, includePng));
     }
 }

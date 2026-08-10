@@ -8,28 +8,43 @@ import orange.wz.mcp.resolve.NodePathResolver;
 import orange.wz.mcp.service.McpWorkspaceService;
 import orange.wz.mcp.session.McpSessionState;
 import orange.wz.mcp.support.McpException;
+import orange.wz.mcp.support.McpMemoryRelease;
+import orange.wz.mcp.support.McpRootLeaseRegistry;
+import orange.wz.mcp.support.ResourceLinkAnalyzer;
 import orange.wz.gui.utils.WzNodeUtil;
 import orange.wz.provider.*;
 import orange.wz.provider.properties.*;
 import orange.wz.provider.tools.BinaryReader;
 import orange.wz.provider.tools.WzFileStatus;
+import orange.wz.provider.tools.keyconvert.ContentFingerprint;
+import orange.wz.provider.tools.keyconvert.KeyConvertService;
 import orange.wz.provider.tools.wzkey.WzKey;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     private final NodePathResolver resolver = new NodePathResolver();
 
     @Override
     public void loadFiles(McpSessionState session, List<File> files, WzKey key) {
+        loadFiles(session, files, key, true);
+    }
+
+    @Override
+    public void loadFiles(McpSessionState session, List<File> files, WzKey key, boolean exclusive) {
         if (key == null) throw new McpException("key 不能为空");
         if (files == null || files.isEmpty()) return;
 
@@ -42,6 +57,21 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
                 ensureRootNotLoaded(session, requestedRootPath);
                 ensureRootNotRepeated(requestedRootPaths, requestedRootPath);
                 requestedRootPaths.add(requestedRootPath);
+            }
+            if (exclusive) {
+                List<String> acquired = new ArrayList<>();
+                try {
+                    for (String path : requestedRootPaths) {
+                        McpRootLeaseRegistry.get().acquireExclusive(session.getSessionId(), path);
+                        session.getExclusiveLeases().add(path);
+                        acquired.add(path);
+                    }
+                } catch (RuntimeException ex) {
+                    for (String path : acquired) {
+                        releaseLease(session, path);
+                    }
+                    throw ex;
+                }
             }
             for (File f : files) {
                 if (f == null) continue;
@@ -58,6 +88,7 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
                     session.getRoots().add(new WzFolder(f.getAbsolutePath(), key.getName(), key.getIv(), key.getUserKey()));
                 }
             }
+            session.bumpGeneration();
         } finally {
             session.unlock();
         }
@@ -86,10 +117,16 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         try {
             WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, false);
             if (obj.getParent() == null) {
+                String rootPath = NodePathResolver.rootPathOf(obj);
                 session.getRoots().remove(obj);
+                releaseLease(session, rootPath);
+                McpMemoryRelease.dispose(obj);
+                session.bumpGeneration();
                 return;
             }
             removeFromParent(obj.getParent(), obj);
+            McpMemoryRelease.dispose(obj);
+            session.bumpGeneration();
         } finally {
             session.unlock();
         }
@@ -99,8 +136,45 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     public void unloadAll(McpSessionState session) {
         session.lock();
         try {
+            List<WzObject> roots = new ArrayList<>(session.getRoots());
             session.getRoots().clear();
+            for (WzObject root : roots) {
+                McpMemoryRelease.dispose(root);
+            }
+            List<WzObject> clipboard = new ArrayList<>(session.getClipboard());
             session.getClipboard().clear();
+            for (WzObject item : clipboard) {
+                McpMemoryRelease.dispose(item);
+            }
+            for (String lease : new ArrayList<>(session.getExclusiveLeases())) {
+                releaseLease(session, lease);
+            }
+            session.bumpGeneration();
+            McpMemoryRelease.hintGc();
+        } finally {
+            session.unlock();
+        }
+    }
+
+    @Override
+    public void clearImageCaches(McpSessionState session, boolean clearClipboard) {
+        session.lock();
+        try {
+            for (WzObject root : session.getRoots()) {
+                McpMemoryRelease.clearImageCaches(root);
+            }
+            if (clearClipboard) {
+                List<WzObject> clipboard = new ArrayList<>(session.getClipboard());
+                session.getClipboard().clear();
+                for (WzObject item : clipboard) {
+                    McpMemoryRelease.dispose(item);
+                }
+            } else {
+                for (WzObject item : session.getClipboard()) {
+                    McpMemoryRelease.clearImageCaches(item);
+                }
+            }
+            McpMemoryRelease.hintGc();
         } finally {
             session.unlock();
         }
@@ -111,11 +185,16 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         if (fileName == null || fileName.isBlank()) throw new McpException("fileName 不能为空");
         if (key == null) throw new McpException("key 不能为空");
         if (!fileName.endsWith(".wz")) fileName = fileName + ".wz";
-        WzFile wzFile = WzFile.createNewFile(fileName, version, key.getName(), key.getIv(), key.getUserKey());
-        wzFile.setNewFile(true);
-        wzFile.getWzDirectory().setTempChanged(true);
-        session.getRoots().add(wzFile.getWzDirectory());
-        return NodeSummary.from(wzFile.getWzDirectory());
+        session.lockWrite();
+        try {
+            WzFile wzFile = WzFile.createNewFile(fileName, version, key.getName(), key.getIv(), key.getUserKey());
+            wzFile.setNewFile(true);
+            wzFile.getWzDirectory().setTempChanged(true);
+            session.getRoots().add(wzFile.getWzDirectory());
+            return NodeSummary.from(wzFile.getWzDirectory());
+        } finally {
+            session.unlockWrite();
+        }
     }
 
     @Override
@@ -123,19 +202,24 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         if (fileName == null || fileName.isBlank()) throw new McpException("fileName 不能为空");
         if (key == null) throw new McpException("key 不能为空");
         if (!fileName.endsWith(".img")) fileName = fileName + ".img";
-        WzImageFile wzImageFile = new WzImageFile(fileName, fileName, key.getName(), key.getIv(), key.getUserKey());
-        wzImageFile.setReader(new BinaryReader(wzImageFile.getIv(), wzImageFile.getKey()));
-        wzImageFile.setNewFile(true);
-        wzImageFile.setStatus(WzFileStatus.PARSE_SUCCESS);
-        wzImageFile.setChanged(true);
-        wzImageFile.setTempChanged(true);
-        session.getRoots().add(wzImageFile);
-        return NodeSummary.from(wzImageFile);
+        session.lockWrite();
+        try {
+            WzImageFile wzImageFile = new WzImageFile(fileName, fileName, key.getName(), key.getIv(), key.getUserKey());
+            wzImageFile.setReader(new BinaryReader(wzImageFile.getIv(), wzImageFile.getKey()));
+            wzImageFile.setNewFile(true);
+            wzImageFile.setStatus(WzFileStatus.PARSE_SUCCESS);
+            wzImageFile.setChanged(true);
+            wzImageFile.setTempChanged(true);
+            session.getRoots().add(wzImageFile);
+            return NodeSummary.from(wzImageFile);
+        } finally {
+            session.unlockWrite();
+        }
     }
 
     @Override
     public List<NodeSummary> listLoadedRoots(McpSessionState session) {
-        session.lock();
+        session.lockRead();
         try {
             List<NodeSummary> result = new ArrayList<>(session.getRoots().size());
             for (WzObject root : session.getRoots()) {
@@ -143,24 +227,34 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
             }
             return result;
         } finally {
-            session.unlock();
+            session.unlockRead();
         }
     }
 
     @Override
     public WzObject findNode(McpSessionState session, NodeReference reference, boolean autoParse) {
-        return resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+        session.lockRead();
+        try {
+            return resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+        } finally {
+            session.unlockRead();
+        }
     }
 
     @Override
     public List<NodeSummary> listChildren(McpSessionState session, NodeReference reference, boolean autoParse) {
-        WzObject parent = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
-        List<WzObject> children = getChildren(parent);
-        List<NodeSummary> result = new ArrayList<>();
-        for (WzObject child : children) {
-            result.add(NodeSummary.from(child));
+        session.lockRead();
+        try {
+            WzObject parent = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+            List<WzObject> children = getChildren(parent);
+            List<NodeSummary> result = new ArrayList<>();
+            for (WzObject child : children) {
+                result.add(NodeSummary.from(child));
+            }
+            return result;
+        } finally {
+            session.unlockRead();
         }
-        return result;
     }
 
     @Override
@@ -180,41 +274,132 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
 
     @Override
     public List<NodeSummary> pasteToNode(McpSessionState session, NodeReference targetReference, OverwriteStrategy strategy, boolean autoParse) {
+        return pasteToNode(session, targetReference, strategy, autoParse, true);
+    }
+
+    @Override
+    public List<NodeSummary> pasteToNode(McpSessionState session, NodeReference targetReference, OverwriteStrategy strategy, boolean autoParse, boolean clearClipboard) {
         session.lock();
         try {
-            WzObject target = resolver.resolveFromRoots(session.getRoots(), targetReference, autoParse);
-            if (session.getClipboard().isEmpty()) {
-                throw new McpException("剪贴板为空");
-            }
-
-            List<WzObject> copied = new ArrayList<>();
-            for (WzObject item : session.getClipboard()) {
-                copied.add(item.deepClone(target));
-            }
-
-            if (target instanceof WzDirectory dir) {
-                setPasteWzFileAndReader(copied, dir.getWzFile());
-            } else if (target instanceof WzImage img) {
-                setPasteWzImage(copied, img);
-            } else if (target instanceof WzImageProperty prop && prop.isListProperty()) {
-                setPasteWzImage(copied, prop.getWzImage());
-            } else {
-                throw new McpException("目标节点不支持粘贴: " + target.getClass().getSimpleName());
-            }
-
-            List<NodeSummary> pasted = new ArrayList<>();
-            for (WzObject item : copied) {
-                if (!handleConflict(target, item, strategy)) {
-                    continue;
-                }
-                addChild(target, item);
-                item.setTempChanged(true);
-                pasted.add(NodeSummary.from(item));
-            }
+            List<NodeSummary> pasted = pasteToNodeUnlocked(session, targetReference, strategy, autoParse, clearClipboard);
+            session.bumpGeneration();
             return pasted;
         } finally {
             session.unlock();
         }
+    }
+
+    @Override
+    public Map<String, Object> copyPasteNodes(
+            McpSessionState session,
+            List<NodeReference> sources,
+            List<NodeReference> targets,
+            OverwriteStrategy strategy,
+            boolean autoParse,
+            boolean clearClipboard,
+            boolean releaseSourceCache
+    ) {
+        if (sources == null || sources.isEmpty()) {
+            throw new McpException("sources 不能为空");
+        }
+        if (targets == null || targets.isEmpty()) {
+            throw new McpException("targets 不能为空");
+        }
+        session.lock();
+        try {
+            // Stage clones first — never expose half-filled clipboard to concurrent readers mid-op.
+            List<WzObject> staged = new ArrayList<>();
+            for (NodeReference source : sources) {
+                WzObject obj = resolver.resolveFromRoots(session.getRoots(), source, autoParse);
+                staged.add(obj.deepClone(null));
+            }
+            List<WzObject> previousClipboard = new ArrayList<>(session.getClipboard());
+            session.getClipboard().clear();
+            session.getClipboard().addAll(staged);
+
+            List<Map<String, Object>> results = new ArrayList<>();
+            for (int i = 0; i < targets.size(); i++) {
+                NodeReference target = targets.get(i);
+                boolean clear = clearClipboard && i == targets.size() - 1;
+                List<NodeSummary> pasted = pasteToNodeUnlocked(session, target, strategy, autoParse, clear);
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("rootPath", target.rootPath());
+                row.put("nodePath", target.nodePath());
+                row.put("pasted", pasted);
+                results.add(row);
+            }
+            for (WzObject old : previousClipboard) {
+                McpMemoryRelease.dispose(old);
+            }
+            if (releaseSourceCache) {
+                for (NodeReference source : sources) {
+                    try {
+                        WzObject obj = resolver.resolveFromRoots(session.getRoots(), source, false);
+                        McpMemoryRelease.clearImageCaches(obj);
+                    } catch (Exception ignored) {
+                        // best-effort soft release
+                    }
+                }
+            }
+            session.bumpGeneration();
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("results", results);
+            out.put("sourceCount", sources.size());
+            out.put("targetCount", targets.size());
+            out.put("generation", session.getGeneration());
+            out.put("ok", true);
+            return out;
+        } finally {
+            session.unlock();
+        }
+    }
+
+    /** Caller must already hold session write lock. */
+    private List<NodeSummary> pasteToNodeUnlocked(
+            McpSessionState session,
+            NodeReference targetReference,
+            OverwriteStrategy strategy,
+            boolean autoParse,
+            boolean clearClipboard
+    ) {
+        WzObject target = resolver.resolveFromRoots(session.getRoots(), targetReference, autoParse);
+        if (session.getClipboard().isEmpty()) {
+            throw new McpException("剪贴板为空");
+        }
+
+        List<WzObject> copied = new ArrayList<>();
+        for (WzObject item : session.getClipboard()) {
+            copied.add(item.deepClone(target));
+        }
+
+        if (target instanceof WzDirectory dir) {
+            setPasteWzFileAndReader(copied, dir.getWzFile());
+        } else if (target instanceof WzImage img) {
+            setPasteWzImage(copied, img);
+        } else if (target instanceof WzImageProperty prop && prop.isListProperty()) {
+            setPasteWzImage(copied, prop.getWzImage());
+        } else {
+            throw new McpException("目标节点不支持粘贴: " + target.getClass().getSimpleName());
+        }
+        rekeyPastedMedia(copied);
+
+        List<NodeSummary> pasted = new ArrayList<>();
+        for (WzObject item : copied) {
+            if (!handleConflict(target, item, strategy)) {
+                continue;
+            }
+            addChild(target, item);
+            item.setTempChanged(true);
+            pasted.add(NodeSummary.from(item));
+        }
+        if (clearClipboard) {
+            List<WzObject> oldClipboard = new ArrayList<>(session.getClipboard());
+            session.getClipboard().clear();
+            for (WzObject item : oldClipboard) {
+                McpMemoryRelease.dispose(item);
+            }
+        }
+        return pasted;
     }
 
     @Override
@@ -240,33 +425,58 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     @Override
     public List<NodeSummary> searchNodeByName(McpSessionState session, NodeReference start, String keyword, boolean autoParse) {
         if (keyword == null || keyword.isBlank()) throw new McpException("keyword 不能为空");
-        WzObject root = resolver.resolveFromRoots(session.getRoots(), start, autoParse);
-        List<NodeSummary> result = new ArrayList<>();
-        String key = keyword.toLowerCase(Locale.ROOT);
-        walkByName(root, key, autoParse, result);
-        return result;
+        session.lockRead();
+        try {
+            WzObject root = resolver.resolveFromRoots(session.getRoots(), start, autoParse);
+            List<NodeSummary> result = new ArrayList<>();
+            String key = keyword.toLowerCase(Locale.ROOT);
+            walkByName(root, key, autoParse, result);
+            return result;
+        } finally {
+            session.unlockRead();
+        }
     }
 
     @Override
     public List<Map<String, Object>> searchNodeByValue(McpSessionState session, NodeReference start, String keyword, boolean autoParse) {
         if (keyword == null || keyword.isBlank()) throw new McpException("keyword 不能为空");
-        WzObject root = resolver.resolveFromRoots(session.getRoots(), start, autoParse);
-        List<Map<String, Object>> result = new ArrayList<>();
-        String key = keyword.toLowerCase(Locale.ROOT);
-        walkByValue(root, key, autoParse, result);
-        return result;
+        session.lockRead();
+        try {
+            WzObject root = resolver.resolveFromRoots(session.getRoots(), start, autoParse);
+            List<Map<String, Object>> result = new ArrayList<>();
+            String key = keyword.toLowerCase(Locale.ROOT);
+            walkByValue(root, key, autoParse, result);
+            return result;
+        } finally {
+            session.unlockRead();
+        }
     }
 
     @Override
     public NodeDetail getNodeDetail(McpSessionState session, NodeReference reference, boolean autoParse) {
-        WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
-        return new NodeDetail(NodeSummary.from(obj), extractValue(obj));
+        session.lockRead();
+        try {
+            WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+            return new NodeDetail(NodeSummary.from(obj), extractValue(obj));
+        } finally {
+            session.unlockRead();
+        }
     }
 
     @Override
     public Map<String, Object> getNodeTreeJson(McpSessionState session, NodeReference reference, boolean autoParse, int maxDepth) {
-        WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
-        return serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0);
+        return getNodeTreeJson(session, reference, autoParse, maxDepth, false);
+    }
+
+    @Override
+    public Map<String, Object> getNodeTreeJson(McpSessionState session, NodeReference reference, boolean autoParse, int maxDepth, boolean includePng) {
+        session.lockRead();
+        try {
+            WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+            return serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0, includePng);
+        } finally {
+            session.unlockRead();
+        }
     }
 
     @Override
@@ -275,14 +485,28 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         if (queries == null) {
             return results;
         }
-        for (Map<String, Object> query : queries) {
-            results.add(executeBatchFindQuery(session, query));
+        session.lockRead();
+        try {
+            for (Map<String, Object> query : queries) {
+                results.add(executeBatchFindQuery(session, query));
+            }
+            return results;
+        } finally {
+            session.unlockRead();
         }
-        return results;
     }
 
     @Override
     public List<Map<String, Object>> batchUpdateNodes(McpSessionState session, List<Map<String, Object>> operations) {
+        return batchUpdateNodes(session, operations, false);
+    }
+
+    @Override
+    public List<Map<String, Object>> batchUpdateNodes(
+            McpSessionState session,
+            List<Map<String, Object>> operations,
+            boolean continueOnError
+    ) {
         List<Map<String, Object>> results = new ArrayList<>();
         if (operations == null) {
             return results;
@@ -290,8 +514,24 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         session.lock();
         try {
             for (Map<String, Object> operation : operations) {
-                results.add(executeBatchUpdateOperation(session, operation));
+                try {
+                    Map<String, Object> row = new LinkedHashMap<>(executeBatchUpdateOperation(session, operation));
+                    row.putIfAbsent("ok", true);
+                    results.add(row);
+                } catch (RuntimeException ex) {
+                    if (!continueOnError) {
+                        throw ex;
+                    }
+                    Map<String, Object> err = new LinkedHashMap<>();
+                    err.put("ok", false);
+                    err.put("error", ex.getMessage());
+                    err.put("op", optionalString(operation.get("op")));
+                    err.put("rootPath", optionalString(operation.get("rootPath")));
+                    err.put("nodePath", optionalString(operation.get("nodePath")));
+                    results.add(err);
+                }
             }
+            session.bumpGeneration();
         } finally {
             session.unlock();
         }
@@ -299,21 +539,339 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     }
 
     @Override
+    public List<Map<String, Object>> listDirtyRoots(McpSessionState session) {
+        session.lockRead();
+        try {
+            return ResourceLinkAnalyzer.collectDirtyRoots(session.getRoots());
+        } finally {
+            session.unlockRead();
+        }
+    }
+
+    @Override
+    public Map<String, Object> saveDirtyRoots(McpSessionState session, boolean unloadAfterSave, boolean clearCache) {
+        session.lockWrite();
+        try {
+            List<Map<String, Object>> dirty = ResourceLinkAnalyzer.collectDirtyRoots(session.getRoots());
+            List<Map<String, Object>> saved = new ArrayList<>();
+            List<Map<String, Object>> failed = new ArrayList<>();
+            for (Map<String, Object> row : dirty) {
+                String rootPath = String.valueOf(row.get("rootPath"));
+                try {
+                    WzObject obj = resolver.resolveRoot(session.getRoots(), rootPath);
+                    WzSavableFile file = toSavableFile(obj);
+                    if (file == null) {
+                        Map<String, Object> fail = new LinkedHashMap<>(row);
+                        fail.put("error", "该根不支持保存");
+                        failed.add(fail);
+                        continue;
+                    }
+                    if (!file.save()) {
+                        Map<String, Object> fail = new LinkedHashMap<>(row);
+                        fail.put("error", "保存失败");
+                        failed.add(fail);
+                        continue;
+                    }
+                    Map<String, Object> ok = new LinkedHashMap<>(row);
+                    ok.put("saved", true);
+                    saved.add(ok);
+                    if (unloadAfterSave) {
+                        session.getRoots().remove(obj);
+                        releaseLease(session, rootPath);
+                        McpMemoryRelease.dispose(obj);
+                    }
+                } catch (RuntimeException ex) {
+                    Map<String, Object> fail = new LinkedHashMap<>(row);
+                    fail.put("error", ex.getMessage());
+                    failed.add(fail);
+                }
+            }
+            if (clearCache && !unloadAfterSave) {
+                for (WzObject root : session.getRoots()) {
+                    McpMemoryRelease.clearImageCaches(root);
+                }
+                McpMemoryRelease.hintGc();
+            }
+            session.bumpGeneration();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("dirtyCount", dirty.size());
+            result.put("saved", saved);
+            result.put("failed", failed);
+            result.put("ok", failed.isEmpty());
+            result.put("generation", session.getGeneration());
+            return result;
+        } finally {
+            session.unlockWrite();
+        }
+    }
+
+    @Override
+    public Map<String, Object> analyzeResourceLinks(
+            McpSessionState session,
+            List<String> ids,
+            boolean autoParse,
+            int maxUolChecks
+    ) {
+        session.lockRead();
+        try {
+            return ResourceLinkAnalyzer.analyzeIds(
+                    session.getRoots(),
+                    ids,
+                    autoParse,
+                    Math.max(1, maxUolChecks)
+            );
+        } finally {
+            session.unlockRead();
+        }
+    }
+
+    @Override
+    public Map<String, Object> verifyCanvasFormats(
+            McpSessionState session,
+            NodeReference reference,
+            boolean autoParse,
+            int maxReport,
+            List<String> flagFormats
+    ) {
+        session.lockRead();
+        try {
+            WzObject start = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+            Set<String> flags = new HashSet<>();
+            if (flagFormats == null || flagFormats.isEmpty()) {
+                flags.add(WzPngFormat.ARGB8888.name());
+            } else {
+                for (String f : flagFormats) {
+                    if (f != null && !f.isBlank()) {
+                        flags.add(f.trim().toUpperCase(Locale.ROOT));
+                    }
+                }
+            }
+            return ResourceLinkAnalyzer.scanCanvasFormats(
+                    start,
+                    autoParse,
+                    Math.max(1, maxReport),
+                    flags
+            );
+        } finally {
+            session.unlockRead();
+        }
+    }
+
+    @Override
     public void saveNode(McpSessionState session, NodeReference reference, boolean autoParse) {
-        WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
-        WzSavableFile file = toSavableFile(obj);
-        if (file == null) throw new McpException("该节点不支持保存: " + obj.getClass().getSimpleName());
-        if (!file.save()) throw new McpException("保存失败: " + file.getName());
+        saveNode(session, reference, autoParse, false, false);
+    }
+
+    @Override
+    public void saveNode(McpSessionState session, NodeReference reference, boolean autoParse, boolean unloadAfterSave, boolean clearCache) {
+        session.lockWrite();
+        try {
+            WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+            WzSavableFile file = toSavableFile(obj);
+            if (file == null) throw new McpException("该节点不支持保存: " + obj.getClass().getSimpleName());
+            if (!file.save()) throw new McpException("保存失败: " + file.getName());
+            afterSaveRelease(session, reference, obj, unloadAfterSave, clearCache);
+        } finally {
+            session.unlockWrite();
+        }
     }
 
     @Override
     public void saveNodeAs(McpSessionState session, NodeReference reference, String filePath, boolean autoParse) {
+        saveNodeAs(session, reference, filePath, autoParse, false, false);
+    }
+
+    @Override
+    public void saveNodeAs(McpSessionState session, NodeReference reference, String filePath, boolean autoParse, boolean unloadAfterSave, boolean clearCache) {
         if (filePath == null || filePath.isBlank()) throw new McpException("filePath 不能为空");
-        WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
-        WzSavableFile file = toSavableFile(obj);
-        if (file == null) throw new McpException("该节点不支持另存为: " + obj.getClass().getSimpleName());
-        file.setFilePath(filePath);
-        if (!file.save()) throw new McpException("另存为失败: " + file.getName());
+        session.lockWrite();
+        try {
+            WzObject obj = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
+            WzSavableFile file = toSavableFile(obj);
+            if (file == null) throw new McpException("该节点不支持另存为: " + obj.getClass().getSimpleName());
+            file.setFilePath(filePath);
+            if (!file.save()) throw new McpException("另存为失败: " + file.getName());
+            afterSaveRelease(session, reference, obj, unloadAfterSave, clearCache);
+        } finally {
+            session.unlockWrite();
+        }
+    }
+
+    @Override
+    public Map<String, Object> changeKey(
+            McpSessionState session,
+            String rootPath,
+            WzKey targetKey,
+            Short targetWzVersion,
+            boolean save,
+            boolean verify
+    ) {
+        if (targetKey == null) throw new McpException("key 不能为空");
+        session.lockWrite();
+        try {
+            WzObject root = resolver.resolveRoot(session.getRoots(), rootPath);
+            String before;
+            boolean ok;
+            if (root instanceof WzImageFile img) {
+                if (!img.parse()) throw new McpException("解析失败: " + img.getName());
+                before = verify ? ContentFingerprint.ofImage(img) : null;
+                ok = img.changeKey(targetKey.getName(), targetKey.getIv(), targetKey.getUserKey());
+                if (!ok) throw new McpException("changeKey 失败: " + img.getName());
+                if (save && !img.save()) throw new McpException("保存失败: " + img.getName());
+                if (verify) {
+                    String after = ContentFingerprint.ofImage(img);
+                    if (!Objects.equals(before, after)) {
+                        throw new McpException("指纹不一致 before=" + before + " after=" + after);
+                    }
+                }
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("rootPath", rootPath);
+                result.put("type", "img");
+                result.put("saved", save);
+                result.put("verified", verify);
+                result.put("fingerprint", verify ? before : null);
+                return result;
+            }
+            if (root instanceof WzDirectory dir && dir.isWzFile()) {
+                WzFile wz = dir.getWzFile();
+                if (!wz.parse()) throw new McpException("解析失败: " + wz.getName());
+                short version = targetWzVersion != null ? targetWzVersion : wz.getHeader().getFileVersion();
+                before = verify ? ContentFingerprint.ofDirectory(dir) : null;
+                ok = wz.changeKey(version, targetKey.getName(), targetKey.getIv(), targetKey.getUserKey());
+                if (!ok) throw new McpException("changeKey 失败: " + wz.getName());
+                dir.setTempChanged(true);
+                if (save) {
+                    String savedPath = wz.getFilePath();
+                    if (!wz.save()) throw new McpException("保存失败: " + wz.getName());
+                    // save() clears the in-memory tree — drop stale session root
+                    session.getRoots().remove(dir);
+                    if (verify) {
+                        WzFile check = new WzFile(savedPath, version, targetKey.getName(),
+                                targetKey.getIv(), targetKey.getUserKey());
+                        try {
+                            if (!check.parse()) throw new McpException("校验重读失败: " + savedPath);
+                            String after = ContentFingerprint.ofDirectory(check.getWzDirectory());
+                            if (!Objects.equals(before, after)) {
+                                throw new McpException("指纹不一致 before=" + before + " after=" + after);
+                            }
+                        } finally {
+                            check.clear();
+                        }
+                    }
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("rootPath", rootPath);
+                    result.put("type", "wz");
+                    result.put("saved", true);
+                    result.put("verified", verify);
+                    result.put("unloadedAfterSave", true);
+                    result.put("fingerprint", verify ? before : null);
+                    return result;
+                }
+                if (verify) {
+                    String after = ContentFingerprint.ofDirectory(dir);
+                    if (!Objects.equals(before, after)) {
+                        throw new McpException("指纹不一致 before=" + before + " after=" + after);
+                    }
+                }
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("rootPath", rootPath);
+                result.put("type", "wz");
+                result.put("saved", false);
+                result.put("verified", verify);
+                result.put("fingerprint", verify ? before : null);
+                return result;
+            }
+            throw new McpException("仅支持对已加载的 .img / .wz 根节点换钥: " + root.getClass().getSimpleName());
+        } finally {
+            session.unlockWrite();
+        }
+    }
+
+    @Override
+    public Map<String, Object> batchConvertKey(
+            String sourceDir,
+            String outputDir,
+            String sourceRoot,
+            List<String> paths,
+            WzKey sourceKey,
+            WzKey targetKey,
+            Short targetWzVersion,
+            int parallelism,
+            boolean verify,
+            boolean overwrite
+    ) {
+        if (outputDir == null || outputDir.isBlank()) throw new McpException("outputDir 不能为空");
+        if (sourceKey == null || targetKey == null) throw new McpException("sourceKey/targetKey 不能为空");
+        try {
+            KeyConvertService converter = new KeyConvertService();
+            KeyConvertService.BatchResult batch;
+            Path out = Path.of(outputDir);
+            if (sourceDir != null && !sourceDir.isBlank()) {
+                KeyConvertService.ConvertRequest req = new KeyConvertService.ConvertRequest(
+                        Path.of(sourceDir), out, sourceKey, targetKey, targetWzVersion,
+                        parallelism, verify, overwrite
+                );
+                batch = converter.convertTree(req);
+            } else if (paths != null && !paths.isEmpty()) {
+                Path root = sourceRoot != null && !sourceRoot.isBlank()
+                        ? Path.of(sourceRoot)
+                        : Path.of(paths.getFirst()).getParent();
+                List<Path> files = new ArrayList<>();
+                for (String p : paths) {
+                    files.add(Path.of(p));
+                }
+                KeyConvertService.ConvertRequest req = new KeyConvertService.ConvertRequest(
+                        root, out, sourceKey, targetKey, targetWzVersion,
+                        parallelism, verify, overwrite
+                );
+                batch = converter.convertFiles(files, root, req);
+            } else {
+                throw new McpException("必须提供 sourceDir 或 paths");
+            }
+
+            List<Map<String, Object>> fileResults = new ArrayList<>();
+            for (KeyConvertService.FileResult fr : batch.results()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("path", fr.relativePath());
+                row.put("success", fr.success());
+                row.put("message", fr.message());
+                row.put("fingerprint", fr.fingerprint());
+                fileResults.add(row);
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("total", batch.total());
+            result.put("success", batch.success());
+            result.put("failure", batch.failure());
+            result.put("elapsedMs", batch.elapsedMs());
+            result.put("verify", verify);
+            result.put("parallelism", Math.max(1, parallelism));
+            result.put("results", fileResults);
+            if (batch.failure() > 0) {
+                result.put("ok", false);
+            } else {
+                result.put("ok", true);
+            }
+            return result;
+        } catch (IOException e) {
+            throw new McpException("batch_convert_key 失败: " + e.getMessage(), e);
+        }
+    }
+
+    private void afterSaveRelease(McpSessionState session, NodeReference reference, WzObject obj, boolean unloadAfterSave, boolean clearCache) {
+        if (unloadAfterSave) {
+            // Prefer unloading the saved root; fall back to soft cache clear.
+            try {
+                unloadNode(session, new NodeReference(NodePathResolver.rootPathOf(obj), null));
+            } catch (Exception ignored) {
+                if (clearCache) {
+                    clearImageCaches(session, true);
+                }
+            }
+            return;
+        }
+        if (clearCache) {
+            clearImageCaches(session, true);
+        }
     }
 
     private List<WzObject> getChildren(WzObject parent) {
@@ -451,7 +1009,9 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         } else {
             image = decodeBase64Png(base64Png);
         }
-        WzPngFormat format = pngFormat == null || pngFormat.isBlank() ? WzPngFormat.ARGB8888 : parsePngFormat(pngFormat);
+        WzPngFormat format = pngFormat == null || pngFormat.isBlank()
+                ? WzPngFormat.ARGB4444
+                : parsePngFormat(pngFormat);
         prop.setPng(image, format, 0);
         return createPropertyNode(parent, prop);
     }
@@ -579,6 +1139,10 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     }
 
     private Map<String, Object> extractValue(WzObject obj) {
+        return extractValue(obj, true);
+    }
+
+    private Map<String, Object> extractValue(WzObject obj, boolean includePng) {
         Map<String, Object> result = new HashMap<>();
         result.put("name", obj.getName());
         result.put("rootPath", NodePathResolver.rootPathOf(obj));
@@ -599,13 +1163,20 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
             case WzUOLProperty p -> result.put("value", p.getValue());
             case WzSoundProperty p -> {
                 result.put("lenMs", p.getLenMs());
-                result.put("mp3", Base64.getEncoder().encodeToString(p.getSoundBytes()));
+                if (includePng) {
+                    // includePng gates heavy media payloads (png + mp3) for tree listings
+                    result.put("mp3", Base64.getEncoder().encodeToString(p.getSoundBytes()));
+                }
             }
             case WzCanvasProperty p -> {
                 result.put("width", p.getWidth());
                 result.put("height", p.getHeight());
                 result.put("pngFormat", p.getFormat().name());
-                result.put("png", Base64.getEncoder().encodeToString(p.getImageBytes(false)));
+                if (includePng) {
+                    result.put("png", Base64.getEncoder().encodeToString(p.getImageBytes(false)));
+                    // Drop decoded BufferedImage immediately after encoding so tree walks don't pin pixels.
+                    p.clearImage();
+                }
             }
             default -> {
             }
@@ -614,7 +1185,11 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     }
 
     private Map<String, Object> serializeTree(WzObject obj, boolean autoParse, int maxDepth, int currentDepth) {
-        Map<String, Object> result = new HashMap<>(extractValue(obj));
+        return serializeTree(obj, autoParse, maxDepth, currentDepth, false);
+    }
+
+    private Map<String, Object> serializeTree(WzObject obj, boolean autoParse, int maxDepth, int currentDepth, boolean includePng) {
+        Map<String, Object> result = new HashMap<>(extractValue(obj, includePng));
         result.put("children", List.of());
         if (currentDepth >= maxDepth) {
             return result;
@@ -627,7 +1202,7 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
 
         List<Map<String, Object>> serializedChildren = new ArrayList<>();
         for (WzObject child : children) {
-            serializedChildren.add(serializeTree(child, autoParse, maxDepth, currentDepth + 1));
+            serializedChildren.add(serializeTree(child, autoParse, maxDepth, currentDepth + 1, includePng));
         }
         result.put("children", serializedChildren);
         return result;
@@ -995,9 +1570,27 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
             throw new McpException("该节点类型不支持 set_png: " + obj.getClass().getSimpleName());
         }
         BufferedImage image = decodeBase64Png(base64Png);
-        WzPngFormat format = pngFormat == null || pngFormat.isBlank() ? prop.getFormat() : parsePngFormat(pngFormat);
+        WzPngFormat format;
+        if (pngFormat == null || pngFormat.isBlank()) {
+            format = prop.getFormat() != null ? prop.getFormat() : WzPngFormat.ARGB4444;
+        } else {
+            format = parsePngFormat(pngFormat);
+        }
+        // v083 live client: ARGB8888 web injects historically caused CRC / bad-data boots.
+        if (format == WzPngFormat.ARGB8888) {
+            // Keep allowed when explicit, but prefer callers to pass ARGB4444 for inventory icons.
+        }
         prop.setPng(image, format, prop.getScale());
         markChanged(prop);
+    }
+
+    private void releaseLease(McpSessionState session, String rootPath) {
+        if (rootPath == null || rootPath.isBlank()) {
+            return;
+        }
+        String normalized = NodePathResolver.normalizeRootPath(rootPath);
+        session.getExclusiveLeases().remove(normalized);
+        McpRootLeaseRegistry.get().release(session.getSessionId(), normalized);
     }
 
     private void applySetSound(WzObject obj, String base64Mp3) {
@@ -1066,7 +1659,8 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         result.put("matches", List.of(NodeSummary.from(obj)));
         if (booleanValue(query.get("includeTree"), false)) {
             int maxDepth = integerValue(query.get("maxDepth")) == null ? 0 : integerValue(query.get("maxDepth"));
-            result.put("tree", serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0));
+            boolean includePng = booleanValue(query.get("includePng"), false);
+            result.put("tree", serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0, includePng));
         }
         return result;
     }
@@ -1094,11 +1688,12 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     private Map<String, Object> executeGetTree(McpSessionState session, Map<String, Object> query, boolean autoParse, String op) {
         NodeReference reference = nodeReference(query);
         int maxDepth = integerValue(query.get("maxDepth")) == null ? 0 : integerValue(query.get("maxDepth"));
+        boolean includePng = booleanValue(query.get("includePng"), false);
         return Map.of(
                 "op", op,
                 "rootPath", reference.rootPath(),
                 "nodePath", reference.nodePath(),
-                "tree", getNodeTreeJson(session, reference, autoParse, maxDepth)
+                "tree", getNodeTreeJson(session, reference, autoParse, maxDepth, includePng)
         );
     }
 
@@ -1114,10 +1709,11 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         result.put("matches", matches);
         if (booleanValue(query.get("includeTree"), false) && !matches.isEmpty()) {
             int maxDepth = integerValue(query.get("maxDepth")) == null ? 0 : integerValue(query.get("maxDepth"));
+            boolean includePng = booleanValue(query.get("includePng"), false);
             List<Map<String, Object>> trees = new ArrayList<>();
             for (NodeSummary match : matches) {
                 WzObject obj = resolver.resolveFromRoots(session.getRoots(), new NodeReference(match.rootPath(), match.nodePath()), autoParse);
-                trees.add(serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0));
+                trees.add(serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0, includePng));
             }
             result.put("trees", trees);
         }
@@ -1136,6 +1732,7 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         result.put("matches", matches);
         if (booleanValue(query.get("includeTree"), false) && !matches.isEmpty()) {
             int maxDepth = integerValue(query.get("maxDepth")) == null ? 0 : integerValue(query.get("maxDepth"));
+            boolean includePng = booleanValue(query.get("includePng"), false);
             List<Map<String, Object>> trees = new ArrayList<>();
             for (Map<String, Object> match : matches) {
                 Object rootPath = match.get("rootPath");
@@ -1144,7 +1741,7 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
                 }
                 String matchNodePath = optionalString(match.get("nodePath"));
                 WzObject obj = resolver.resolveFromRoots(session.getRoots(), new NodeReference(matchRootPath, matchNodePath), autoParse);
-                trees.add(serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0));
+                trees.add(serializeTree(obj, autoParse, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth, 0, includePng));
             }
             result.put("trees", trees);
         }
@@ -1376,6 +1973,20 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
                 prop.setChildrenWzImage(image);
             } else {
                 throw new McpException("无法设置 WzImage: " + item.getClass().getSimpleName());
+            }
+        }
+    }
+
+    private void rekeyPastedMedia(List<? extends WzObject> items) {
+        for (WzObject item : items) {
+            if (item instanceof WzDirectory dir) {
+                rekeyPastedMedia(dir.getChildren());
+            } else if (item instanceof WzImage img) {
+                img.rebuildEncryptedSoundsForChangeKey(img.getChildren());
+            } else if (item instanceof WzSoundProperty sound) {
+                sound.rekeyHeaderForCurrentWzKey();
+            } else if (item instanceof WzImageProperty prop && prop.isListProperty()) {
+                rekeyPastedMedia(prop.getChildren());
             }
         }
     }

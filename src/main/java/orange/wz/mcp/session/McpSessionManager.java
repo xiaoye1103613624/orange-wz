@@ -1,5 +1,11 @@
 package orange.wz.mcp.session;
 
+import orange.wz.mcp.support.McpMemoryRelease;
+import orange.wz.mcp.support.McpRootLeaseRegistry;
+import orange.wz.provider.WzObject;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,11 +52,41 @@ public final class McpSessionManager {
     }
 
     public void remove(UUID id) {
-        sessions.remove(id);
+        McpSessionState session = sessions.remove(id);
+        if (session != null) {
+            disposeSession(session);
+        }
     }
 
     private void evictIdleSessions() {
         long now = System.currentTimeMillis();
-        sessions.entrySet().removeIf(entry -> now - entry.getValue().getLastAccessMillis() > IDLE_TIMEOUT_MILLIS);
+        sessions.entrySet().removeIf(entry -> {
+            if (now - entry.getValue().getLastAccessMillis() > IDLE_TIMEOUT_MILLIS) {
+                disposeSession(entry.getValue());
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void disposeSession(McpSessionState session) {
+        session.lock();
+        try {
+            List<WzObject> roots = new ArrayList<>(session.getRoots());
+            session.getRoots().clear();
+            for (WzObject root : roots) {
+                McpMemoryRelease.dispose(root);
+            }
+            List<WzObject> clipboard = new ArrayList<>(session.getClipboard());
+            session.getClipboard().clear();
+            for (WzObject item : clipboard) {
+                McpMemoryRelease.dispose(item);
+            }
+            session.getExclusiveLeases().clear();
+            McpRootLeaseRegistry.get().releaseAll(session.getSessionId());
+            McpMemoryRelease.hintGc();
+        } finally {
+            session.unlock();
+        }
     }
 }

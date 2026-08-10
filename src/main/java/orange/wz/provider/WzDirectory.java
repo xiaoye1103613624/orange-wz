@@ -9,6 +9,7 @@ import orange.wz.model.Pair;
 import orange.wz.provider.tools.*;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -107,15 +108,50 @@ public class WzDirectory extends WzObject {
         checksum = ck;
     }
 
+    /** 递归统计此目录下所有图片数量，用于进度显示 */
+    public int countImages() {
+        int n = children.getImages().size();
+        for (WzDirectory dir : children.getDirectories()) {
+            n += dir.countImages();
+        }
+        return n;
+    }
+
     public void saveImages(BinaryWriter writer, BinaryWriter tempWriter) {
-        for (WzImage img : children.getImages()) {
+        List<WzImage> images = children.getImages();
+        int total = images.size();
+        int count = 0;
+        long lastLogTime = System.currentTimeMillis();
+        for (WzImage img : images) {
+            long t0 = System.currentTimeMillis();
+            int dataSize;
             if (img.isChanged()) {
                 tempWriter.setPosition(img.getTempFileStart());
-                byte[] buffer = tempWriter.getBytes(img.getDataSize());
+                dataSize = img.getDataSize();
+                byte[] buffer = tempWriter.getBytes(dataSize);
                 writer.putBytes(buffer);
             } else {
                 img.getReader().setPosition(img.getTempFileStart());
-                writer.putBytes(img.getReader().getBytes(img.getTempFileEnd() - img.getTempFileStart()));
+                dataSize = img.getTempFileEnd() - img.getTempFileStart();
+                // 零拷贝: 直接从 mmap 缓冲区切片传输，避免 getBytes() 的完整拷贝
+                ByteBuffer slice = img.getReader().getMutableBuffer();
+                slice.position(img.getTempFileStart());
+                slice.limit(img.getTempFileEnd());
+                writer.putBytes(slice);
+            }
+            long elapsed = System.currentTimeMillis() - t0;
+            count++;
+
+            // 每个图片超5秒就警告，便于定位慢图片
+            if (elapsed > 5000) {
+                log.warn("  慢图片: {} ({}KB) 耗时{}s [{}/{}]",
+                        img.getName(), dataSize / 1024, elapsed / 1000, count, total);
+            }
+
+            // 每100个或每30秒输出进度
+            if (count % 100 == 0 || System.currentTimeMillis() - lastLogTime > 30000) {
+                log.info("保存 {} 写入 Images {}/{}", wzFile.getName(), count, total);
+                lastLogTime = System.currentTimeMillis();
             }
         }
         for (WzDirectory dir : children.getDirectories()) {
@@ -134,19 +170,19 @@ public class WzDirectory extends WzObject {
         offsetSize = WzTool.getCompressedIntLength(entryCount);
 
         BinaryWriter imgWriter;
-        for (WzImage img : children.getImages()) {
-            log.debug("GenerateDataFile Image: {}", img.getName());
+        List<WzImage> images = children.getImages();
+        int total = images.size();
+        int count = 0;
+        for (WzImage img : images) {
             if (img.isChanged()) {
                 imgWriter = new BinaryWriter();
                 imgWriter.setWzMutableKey(wzFile.getReader().getWzMutableKey());
                 img.save(imgWriter);
-                img.setChecksum(0);
-                byte[] data = imgWriter.output();
-                for (byte b : data) {
-                    img.addChecksum(b);
-                }
+                // 直接从 Writer 缓冲区计算校验和，避免 output() 的完整拷贝
+                img.setChecksum(imgWriter.computeChecksum());
                 img.setTempFileStart(tempWriter.getPosition());
-                tempWriter.putBytes(data);
+                // 零拷贝写入: 直接传输 ByteBuffer，无需中间 byte[]
+                tempWriter.putBytes(imgWriter.getBuffer());
                 img.setTempFileEnd(tempWriter.getPosition());
             } else {
                 img.setTempFileStart(img.getOffset());
@@ -164,6 +200,11 @@ public class WzDirectory extends WzObject {
             offsetSize += WzTool.getCompressedIntLength(imgLen);
             offsetSize += WzTool.getCompressedIntLength(img.getChecksum());
             offsetSize += 4;
+
+            count++;
+            if (count % 500 == 0 || count == total) {
+                log.info("  生成数据 {}/{} 图片", count, total);
+            }
         }
 
         for (WzDirectory dir : children.getDirectories()) {
@@ -273,13 +314,27 @@ public class WzDirectory extends WzObject {
             pool.submit(() -> allImages.parallelStream().forEach(image -> {
                 if (!image.parse()) {
                     log.error("文件 {} 解析失败", image.getName());
-                    throw new RuntimeException();
+                    throw new RuntimeException("changeKey parse failed: " + image.getName());
                 }
                 image.rebuildCompressedForPngBelongListWz(image.getChildren(), wzMutableKey);
                 image.setChanged(true); // 确保保存的时候重新写入，而不是取原来的
             })).join();
         } finally {
             pool.shutdown();
+        }
+    }
+
+    /**
+     * Must run after the owning WzFile reader keystream has been swapped to the new key.
+     */
+    public void rebuildEncryptedSoundsForChangeKey() {
+        List<WzImage> allImages = new java.util.ArrayList<>();
+        collectAllImages(allImages);
+        for (WzImage image : allImages) {
+            if (!image.parse()) {
+                throw new RuntimeException("changeKey sound-rekey parse failed: " + image.getName());
+            }
+            image.rebuildEncryptedSoundsForChangeKey(image.getChildren());
         }
     }
 

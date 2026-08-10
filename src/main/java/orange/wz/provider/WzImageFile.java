@@ -45,11 +45,15 @@ public class WzImageFile extends WzImage implements WzSavableFile {
         return super.parse(realParse);
     }
 
-    public void changeKey(String keyBoxName, byte[] iv, byte[] key) {
+    /**
+     * Re-key this img in memory. Returns false if parse fails.
+     * List.wz PNG ciphertext and encrypted sound headers are rebuilt for the new keystream.
+     */
+    public boolean changeKey(String keyBoxName, byte[] iv, byte[] key) {
         // 先解析把原有内容解码出来缓存在内存里
         if (!parse()) {
             log.error("文件 {} 解析失败", name);
-            return;
+            return false;
         }
         iv = Arrays.copyOf(iv, iv.length);
         key = Arrays.copyOf(key, key.length);
@@ -63,6 +67,9 @@ public class WzImageFile extends WzImage implements WzSavableFile {
         setKey(key);
         setChanged(true); // 确保保存的时候重新写入，而不是取原来的
         getReader().setWzMutableKey(wzMutableKey);
+        // Sound headers may have been XOR'd with the old keystream (List.wz); rebuild after key swap.
+        rebuildEncryptedSoundsForChangeKey(getChildren());
+        return true;
     }
 
     @Override

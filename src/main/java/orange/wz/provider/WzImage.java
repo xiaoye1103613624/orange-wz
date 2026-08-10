@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import orange.wz.provider.properties.WzCanvasProperty;
 import orange.wz.provider.properties.WzExtended;
 import orange.wz.provider.properties.WzListProperty;
+import orange.wz.provider.properties.WzSoundProperty;
 import orange.wz.provider.tools.*;
 
 import java.io.IOException;
@@ -324,6 +325,18 @@ public class WzImage extends WzObject {
             }
             if (property instanceof WzCanvasProperty canvas) {
                 canvas.rebuildCompressedBytesUseNewWzKey(wzMutableKey);
+            }
+        }
+    }
+
+    /** Re-encrypt List.wz sound headers after the image reader keystream changed. */
+    public void rebuildEncryptedSoundsForChangeKey(List<WzImageProperty> propertyList) {
+        for (WzImageProperty property : propertyList) {
+            if (property.isListProperty()) {
+                rebuildEncryptedSoundsForChangeKey(property.getChildren());
+            }
+            if (property instanceof WzSoundProperty sound) {
+                sound.rekeyHeaderForCurrentWzKey();
             }
         }
     }

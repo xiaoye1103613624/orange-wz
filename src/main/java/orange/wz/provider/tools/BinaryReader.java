@@ -278,11 +278,18 @@ public final class BinaryReader {
     }
 
     /**
-     * 获取底层 ByteBuffer 的只读视图，用于零拷贝操作（如直接计算校验和）。
-     * 调用者不应修改 buffer 内容。
+     * 获取底层 ByteBuffer 的只读视图，用于零拷贝校验和计算。
      */
     public ByteBuffer getBuffer() {
         return buffer.asReadOnlyBuffer();
+    }
+
+    /**
+     * 获取底层 ByteBuffer 的可写副本（共享同一内存映射），用于零拷贝切片传输。
+     * 调用者可修改 position/limit 进行切片操作，不会影响原始 reader 的位置。
+     */
+    public ByteBuffer getMutableBuffer() {
+        return buffer.duplicate();
     }
 
     /**

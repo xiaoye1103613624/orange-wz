@@ -199,6 +199,9 @@ public final class XmlExport {
                         String filename = FileTool.safeFileName(mediaFilename + prop.getName() + ".mp3");
                         Path p = mediaFolder.resolve(filename);
                         FileTool.saveFile(p, prop.getSoundBytes(false));
+                    } else {
+                        // NONE模式：无需嵌入音视频数据，直接自闭合标签
+                        context = context + "/>";
                     }
 
                     writer.write(context);

@@ -141,7 +141,16 @@ public class WzSoundProperty extends WzExtended {
         WzMutableKey wzMutableKey = wzImage.getReader().getWzMutableKey();
         BinaryWriter writer = new BinaryWriter();
         writer.putBytes(soundHeader);
-        byte[] wavHeader = mp3StructToBytes((Mp3WaveFormat) waveFormat);
+        // PCM uses WaveFormat (18 bytes); MP3 uses Mp3WaveFormat (30 bytes).
+        // Casting PCM → Mp3WaveFormat caused save_fail for NPC/BGM packs with WAVE audio.
+        byte[] wavHeader;
+        if (waveFormat instanceof Mp3WaveFormat) {
+            wavHeader = mp3StructToBytes((Mp3WaveFormat) waveFormat);
+        } else if (waveFormat != null) {
+            wavHeader = waveStructToBytes(waveFormat);
+        } else {
+            throw new IllegalStateException("waveFormat is null when rebuilding sound header: " + getPath());
+        }
         if (headerEncrypted) {
             for (int i = 0; i < wavHeader.length; i++) {
                 wavHeader[i] ^= wzMutableKey.get(i);
@@ -150,6 +159,23 @@ public class WzSoundProperty extends WzExtended {
         writer.putByte((byte) wavHeader.length);
         writer.putBytes(wavHeader);
         header = writer.output();
+    }
+
+    /**
+     * After WZ key change or cross-key paste, rewrite cached header with the image's current key.
+     * Plain (non-List.wz) headers are left untouched; encrypted headers must match the new keystream.
+     */
+    public void rekeyHeaderForCurrentWzKey() {
+        if (!headerEncrypted) {
+            return;
+        }
+        if (waveFormat == null) {
+            throw new IllegalStateException("encrypted sound header cannot be rekeyed without waveFormat: " + getPath());
+        }
+        if (wzImage == null || wzImage.getReader() == null || wzImage.getReader().getWzMutableKey() == null) {
+            throw new IllegalStateException("encrypted sound header rekey requires bound WzImage reader: " + getPath());
+        }
+        rebuildHeader();
     }
 
     private WaveFormat bytesToWaveStruct(byte[] waveFormatBytes) {
@@ -181,6 +207,18 @@ public class WzSoundProperty extends WzExtended {
                 .framesPerBlock(reader.getShort())
                 .codecDelay(reader.getShort())
                 .build();
+    }
+
+    private byte[] waveStructToBytes(WaveFormat waveFormat) {
+        BinaryWriter writer = new BinaryWriter();
+        writer.putShort((short) waveFormat.getWaveFormatTag().getValue());
+        writer.putShort(waveFormat.getChannels());
+        writer.putInt(waveFormat.getSampleRate());
+        writer.putInt(waveFormat.getAverageBytesPerSecond());
+        writer.putShort(waveFormat.getBlockAlign());
+        writer.putShort(waveFormat.getBitsPerSample());
+        writer.putShort(waveFormat.getExtraSize());
+        return writer.output();
     }
 
     private byte[] mp3StructToBytes(Mp3WaveFormat waveFormat) {
@@ -218,11 +256,17 @@ public class WzSoundProperty extends WzExtended {
         byte[] soundBytes = getSoundBytes(false);
         clone.soundBytes = Arrays.copyOf(soundBytes, soundBytes.length);
         clone.lenMs = lenMs;
-        // clone.header = Arrays.copyOf(header, header.length); // header 需要用key 重新生成
+        // Preserve parsed header when present so save does not force MP3 rebuild.
+        // Same encryption key (e.g. GMS→GMS append) can reuse the header bytes;
+        // if header is null, rebuildHeader() now supports PCM as well as MP3.
+        byte[] hdr = header != null ? header : getHeader();
+        if (hdr != null) {
+            clone.header = Arrays.copyOf(hdr, hdr.length);
+        }
         clone.headerEncrypted = headerEncrypted;
         // clone.offset = offset;
         clone.soundDataLen = soundDataLen;
-        clone.waveFormat = waveFormat.deepCopy();
+        clone.waveFormat = waveFormat != null ? waveFormat.deepCopy() : null;
         return clone;
     }
 }

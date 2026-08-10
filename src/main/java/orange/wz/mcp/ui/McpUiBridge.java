@@ -47,6 +47,7 @@ public final class McpUiBridge {
             case "load_files" -> "MCP 正在加载文件...";
             case "unload_node" -> "MCP 正在卸载节点...";
             case "unload_all" -> "MCP 正在清空工作区...";
+            case "clear_cache" -> "MCP 正在释放图片缓存...";
             case "create_wz_file" -> "MCP 正在创建 WZ 文件...";
             case "create_img_file" -> "MCP 正在创建 IMG 文件...";
             case "create_child_node" -> "MCP 正在创建子节点...";
@@ -267,6 +268,7 @@ public final class McpUiBridge {
             case "load_files" -> "MCP 文件加载完成";
             case "unload_node" -> "MCP 节点卸载完成";
             case "unload_all" -> "MCP 工作区已清空";
+            case "clear_cache" -> "MCP 图片缓存已释放";
             case "create_wz_file" -> "MCP WZ 文件创建完成";
             case "create_img_file" -> "MCP IMG 文件创建完成";
             case "create_child_node" -> "MCP 子节点创建完成";

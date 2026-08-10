@@ -65,11 +65,22 @@ public class WzCanvasProperty extends WzExtended {
     }
 
     public void clearImage() {
-        png.clearImage();
+        if (png != null) {
+            png.clearImage();
+        }
+    }
+
+    /** Drop decoded BufferedImage + compressed bytes (lazy reload via re-parse when possible). */
+    public void clearMemory() {
+        if (png != null) {
+            png.clearMemory();
+        }
     }
 
     public void clearPngProperty() {
-        png.setParent(null);
+        if (png != null) {
+            png.setParent(null);
+        }
         png = null;
     }
 

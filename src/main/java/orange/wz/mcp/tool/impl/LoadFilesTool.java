@@ -16,10 +16,11 @@ public final class LoadFilesTool extends BaseSessionTool {
     private final McpWorkspaceService service;
 
     public LoadFilesTool(McpSessionManager sessionManager, McpWorkspaceService service) {
-        super(sessionManager, "加载 wz/img/xml 文件或目录到当前 MCP 会话；若目标根已加载则返回错误。", objectSchema(
+        super(sessionManager, "加载 wz/img/xml 文件或目录到当前 MCP 会话；若目标根已加载则返回错误。默认 exclusive=true 阻止跨会话并发写同一路径。", objectSchema(
                 Map.of(
                         "paths", arraySchema(stringSchema()),
-                        "key", keySchema()
+                        "key", keySchema(),
+                        "exclusive", booleanSchema()
                 ),
                 List.of("paths", "key")
         ));
@@ -35,8 +36,14 @@ public final class LoadFilesTool extends BaseSessionTool {
     public Map<String, Object> invoke(Map<String, Object> params) {
         List<File> files = ToolParamHelper.getCanonicalLoadFiles(params, "paths");
         WzKey key = ToolParamHelper.getWzKey(params, "key");
+        boolean exclusive = ToolParamHelper.getBoolean(params, "exclusive", true);
         var session = session(params);
-        service.loadFiles(session, files, key);
-        return Map.of("loadedCount", files.size(), "rootCount", session.getRoots().size());
+        service.loadFiles(session, files, key, exclusive);
+        return Map.of(
+                "loadedCount", files.size(),
+                "rootCount", session.getRoots().size(),
+                "exclusive", exclusive,
+                "generation", session.getGeneration()
+        );
     }
 }

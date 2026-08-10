@@ -274,6 +274,39 @@ public final class BinaryWriter {
     }
 
     /**
+     * 直接从 ByteBuffer 计算校验和（所有字节的无符号和），无需先 output() 拷贝到堆。
+     */
+    public int computeChecksum() {
+        int checksum = 0;
+        int pos = buffer.position();
+        buffer.position(0);
+        while (buffer.hasRemaining()) {
+            checksum += (buffer.get() & 0xFF);
+        }
+        buffer.position(pos); // 恢复位置
+        return checksum;
+    }
+
+    /**
+     * 返回内部 ByteBuffer 的只读视图（已经 flip 过的内容部分），用于零拷贝传输。
+     */
+    public ByteBuffer getBuffer() {
+        ByteBuffer dup = buffer.duplicate();
+        dup.flip();
+        return dup.asReadOnlyBuffer();
+    }
+
+    /**
+     * 将另一个 ByteBuffer 的内容直接写入当前缓冲区，避免中间 byte[] 拷贝。
+     */
+    public void putBytes(ByteBuffer src) {
+        if (buffer.remaining() < src.remaining()) {
+            expandBuffer(src.remaining());
+        }
+        buffer.put(src);
+    }
+
+    /**
      * 直接写入文件，避免 {@link #output()} 产生的中间 byte[] 拷贝。
      * 适用于大文件保存，内存峰值降低约一半。
      */

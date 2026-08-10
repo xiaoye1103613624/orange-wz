@@ -43,7 +43,8 @@ public final class ToolSchemas {
                         "rootPath", stringSchema(),
                         "nodePath", stringSchema(),
                         "autoParse", booleanSchema(),
-                        "maxDepth", numberSchema()
+                        "maxDepth", numberSchema(),
+                        "includePng", booleanSchema()
                 ),
                 List.of("rootPath")
         );
@@ -67,6 +68,7 @@ public final class ToolSchemas {
                         "type", stringSchema(),
                         "includeTree", booleanSchema(),
                         "maxDepth", numberSchema(),
+                        "includePng", booleanSchema(),
                         "autoParse", booleanSchema()
                 ),
                 List.of()

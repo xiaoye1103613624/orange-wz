@@ -31,7 +31,8 @@ public final class PasteNodesTool extends BaseSessionTool {
                         "rootPath", stringSchema(),
                         "nodePath", stringSchema(),
                         "strategy", stringSchema(),
-                        "autoParse", booleanSchema()
+                        "autoParse", booleanSchema(),
+                        "clearClipboard", booleanSchema()
                 ),
                 List.of("rootPath")
         ));
@@ -47,6 +48,7 @@ public final class PasteNodesTool extends BaseSessionTool {
     public Map<String, Object> invoke(Map<String, Object> params) {
         var session = session(params);
         Object rawTargets = params.get("targets");
+        boolean defaultClearClipboard = ToolParamHelper.getBoolean(params, "clearClipboard", true);
         if (rawTargets instanceof List<?>) {
             List<Map<String, Object>> targets = ToolParamHelper.getObjectList(params, "targets");
             List<Map<String, Object>> results = new ArrayList<>();
@@ -54,15 +56,18 @@ public final class PasteNodesTool extends BaseSessionTool {
             boolean defaultAutoParse = ToolParamHelper.getBoolean(params, "autoParse", true);
             session.lock();
             try {
-                for (Map<String, Object> targetParams : targets) {
+                for (int i = 0; i < targets.size(); i++) {
+                    Map<String, Object> targetParams = targets.get(i);
                     var target = ToolParamHelper.getNodeReference(targetParams);
                     boolean autoParse = ToolParamHelper.getBoolean(targetParams, "autoParse", defaultAutoParse);
                     String strategyText = ToolParamHelper.getString(targetParams, "strategy", defaultStrategy);
                     OverwriteStrategy strategy = OverwriteStrategy.valueOf(strategyText.toUpperCase(Locale.ROOT));
+                    // Clear clipboard only after the last paste in a multi-target batch
+                    boolean clearClipboard = (i == targets.size() - 1) && defaultClearClipboard;
                     results.add(Map.of(
                             "rootPath", target.rootPath(),
                             "nodePath", target.nodePath(),
-                            "pasted", service.pasteToNode(session, target, strategy, autoParse)
+                            "pasted", service.pasteToNode(session, target, strategy, autoParse, clearClipboard)
                     ));
                 }
             } finally {
@@ -74,6 +79,6 @@ public final class PasteNodesTool extends BaseSessionTool {
         boolean autoParse = ToolParamHelper.getBoolean(params, "autoParse", true);
         String strategyText = ToolParamHelper.getString(params, "strategy", OverwriteStrategy.ERROR.name());
         OverwriteStrategy strategy = OverwriteStrategy.valueOf(strategyText.toUpperCase(Locale.ROOT));
-        return Map.of("pasted", service.pasteToNode(session, target, strategy, autoParse));
+        return Map.of("pasted", service.pasteToNode(session, target, strategy, autoParse, defaultClearClipboard));
     }
 }

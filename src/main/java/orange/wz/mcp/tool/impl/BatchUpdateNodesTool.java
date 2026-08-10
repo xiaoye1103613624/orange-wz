@@ -3,6 +3,7 @@ package orange.wz.mcp.tool.impl;
 import orange.wz.mcp.service.McpWorkspaceService;
 import orange.wz.mcp.session.McpSessionManager;
 import orange.wz.mcp.tool.support.BaseSessionTool;
+import orange.wz.mcp.tool.support.ToolParamHelper;
 
 import java.util.List;
 import java.util.Map;
@@ -13,8 +14,11 @@ public final class BatchUpdateNodesTool extends BaseSessionTool {
     private final McpWorkspaceService service;
 
     public BatchUpdateNodesTool(McpSessionManager sessionManager, McpWorkspaceService service) {
-        super(sessionManager, "兼容批量写入入口；新调用优先使用 mutate_nodes 的 operations 数组。支持 create_child、delete、rename、set_value、set_vector、set_png、set_sound、save、save_as。", objectSchema(
-                Map.of("operations", arraySchema(updateOperationSchema())),
+        super(sessionManager, "兼容批量写入入口；新调用优先使用 mutate_nodes 的 operations 数组。支持 continueOnError。", objectSchema(
+                Map.of(
+                        "operations", arraySchema(updateOperationSchema()),
+                        "continueOnError", booleanSchema()
+                ),
                 List.of("operations")
         ));
         this.service = service;
@@ -31,6 +35,10 @@ public final class BatchUpdateNodesTool extends BaseSessionTool {
         var session = session(params);
         Object operations = params.get("operations");
         List<Map<String, Object>> list = operations instanceof List<?> raw ? (List<Map<String, Object>>) raw : List.of();
-        return Map.of("results", service.batchUpdateNodes(session, list));
+        boolean continueOnError = ToolParamHelper.getBoolean(params, "continueOnError", false);
+        return Map.of(
+                "results", service.batchUpdateNodes(session, list, continueOnError),
+                "generation", session.getGeneration()
+        );
     }
 }

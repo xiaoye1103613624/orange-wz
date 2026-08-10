@@ -49,6 +49,7 @@ public final class McpServerBootstrap {
         toolRegistry.register(new ListLoadedRootsTool(sessionManager, workspaceService));
         toolRegistry.register(new UnloadNodeTool(sessionManager, workspaceService));
         toolRegistry.register(new UnloadAllTool(sessionManager, workspaceService));
+        toolRegistry.register(new ClearCacheTool(sessionManager, workspaceService));
         toolRegistry.register(new CreateWzFileTool(sessionManager, workspaceService));
         toolRegistry.register(new CreateImgFileTool(sessionManager, workspaceService));
         toolRegistry.register(new ListChildrenTool(sessionManager, workspaceService));
@@ -62,9 +63,16 @@ public final class McpServerBootstrap {
         toolRegistry.register(new DeleteNodeTool(sessionManager, workspaceService));
         toolRegistry.register(new CopyNodesTool(sessionManager, workspaceService));
         toolRegistry.register(new PasteNodesTool(sessionManager, workspaceService));
+        toolRegistry.register(new CopyPasteNodesTool(sessionManager, workspaceService));
         toolRegistry.register(new BatchUpdateNodesTool(sessionManager, workspaceService));
         toolRegistry.register(new MutateNodesTool(sessionManager, workspaceService));
+        toolRegistry.register(new ListDirtyRootsTool(sessionManager, workspaceService));
+        toolRegistry.register(new SaveDirtyRootsTool(sessionManager, workspaceService));
+        toolRegistry.register(new AnalyzeResourceLinksTool(sessionManager, workspaceService));
+        toolRegistry.register(new VerifyCanvasFormatsTool(sessionManager, workspaceService));
         toolRegistry.register(new SaveNodeTool(sessionManager, workspaceService));
         toolRegistry.register(new SaveNodeAsTool(sessionManager, workspaceService));
+        toolRegistry.register(new ChangeKeyTool(sessionManager, workspaceService));
+        toolRegistry.register(new BatchConvertKeyTool(sessionManager, workspaceService));
     }
 }
