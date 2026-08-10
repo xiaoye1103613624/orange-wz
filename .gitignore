@@ -88,3 +88,9 @@ Repack*.java
 Resave*.java
 tools/*.class
 tools/DumpDR.java
+_boot_test/
+_cmp*/
+*_HEAD.cpp
+*_HEAD.h
+probe_*.json
+*_probe.json

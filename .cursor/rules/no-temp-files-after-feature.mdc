@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## Mandate
 
-Finish a WZ/MCP/GUI feature → **remove** temporary process files from the orange-wz tree. Do not leave verify dumps, MCP run logs, or one-off probe Java at the repo root.
+Finish a WZ/MCP/GUI feature batch — **remove** temporary process files from the orange-wz tree. Do not leave verify dumps, MCP run logs, or one-off probe Java at the repo root.
 
 ## Delete (examples)
 
