@@ -15,7 +15,7 @@ public final class VerifyCanvasFormatsTool extends BaseSessionTool {
 
     public VerifyCanvasFormatsTool(McpSessionManager sessionManager, McpWorkspaceService service) {
         super(sessionManager,
-                "扫描节点树 canvas 格式。默认标记 ARGB8888（v083 易导致不正确游戏数据）。可用 flagFormats 自定义。",
+                "扫描节点树 canvas 格式。默认标记 v083 不支持的格式（ARGB1555/DXT5/BC7）以及不支持 scale 却 scale≠0 的画布（含非法 ARGB8888）。合法 ARGB8888+scale=0 与 ARGB4444 可共存，不标红。可用 flagFormats 覆盖默认名单。",
                 objectSchema(
                         Map.of(
                                 "rootPath", stringSchema(),

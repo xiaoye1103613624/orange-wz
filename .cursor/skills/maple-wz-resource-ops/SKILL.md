@@ -14,7 +14,7 @@ description: >-
 | 痛点 | 后果 | 正确做法 |
 |------|------|----------|
 | 裸拷/手改 `.img` | CRC、「不正确的游戏数据」、`0x80030002` | MCP `load→copy→paste→save` |
-| 网页图标 ARGB8888 注入 | 客户端拒识/花屏 | **ARGB4444**（`pngFormat` 显式或默认） |
+| 网页图标当 ARGB8888 灌入（坏包） | 客户端拒识/花屏/`0x8007000D` | 新建默认 **ARGB4444**；合法 format=2 且 **scale=0** 可保留 |
 | `config.ini` UTF-8 BOM | `0xc0000142` | 无 BOM ANSI/UTF-8 |
 | copy 与 paste 分两步跨请求 | 剪贴板被其它调用清空/覆盖 | **`copy_paste_nodes`** 原子操作 |
 | 多会话同路径并发写 | 半包落盘、互相覆盖 | `load_files` 默认 **exclusive** 租约 |
@@ -30,14 +30,14 @@ description: >-
 
 1. `load_files` 已知好源 + live（`exclusive=true`）
 2. 仅补缺：`copy_paste_nodes` + `strategy=SKIP`；换坏包：先验 PKG1 再 `OVERWRITE`
-3. `verify_canvas_formats`（默认抓 ARGB8888）
+3. `verify_canvas_formats`（默认抓 ARGB1555/DXT5/BC7 与非法 scale；合法 8888+scale=0 不标红）
 4. `analyze_resource_links`（相关 ID）
 5. `save_dirty_roots` 或按根 `save_node`（可 `clearCache=true`）
 6. 客户端启动验证；勿留 quarantine 目录在 live `Data\`
 
 ### 新增物品 / 装备最小集合
 
-- 消耗品：Item Consume + String Consume + icon/iconRaw(ARGB4444)
+- 消耗品：Item Consume + String Consume + icon/iconRaw（默认 ARGB4444；已有合法 ARGB8888+scale=0 可保留）
 - 装备：Character 外观 + Item Equip + String Eqp +（服务端 XML/DB）
 - 宣称完成前：`!item` 有名有图
 
@@ -61,20 +61,20 @@ description: >-
 | `copy_paste_nodes` | 原子复制粘贴 |
 | `list_dirty_roots` / `save_dirty_roots` | 脏根清单与批量保存 |
 | `analyze_resource_links` | ID 跨包关联与断链 |
-| `verify_canvas_formats` | 扫描危险 PNG 格式 |
+| `verify_canvas_formats` | 扫描 v083 不支持的 PNG 格式与非法 scale |
 | `mutate_nodes` + `continueOnError` | 批次容错（默认关闭） |
 | `load_files` + `exclusive` | 跨会话独占路径（默认开） |
 
 ## 路径速查
 
-- MCP：`E:\pro\orange-wz`（`ensure-mcp.ps1` → `:10002`）
+- MCP：`E:\pro\orange-wz`（`ensure-mcp.ps1` / `ensure-mcp.bat` → 端口 **10012–10029 自动顺延**，见 `mcp-runtime/endpoint.json`）
 - live：`...\BeiDou-Client_1`；S8：`...\BeiDou-Client_S8`
 - 参考：V16 / `_backup_*` / `_img_merge_backup`
 
 ## 检查清单
 
 - [ ] 未使用文件系统裸拷 `.img`
-- [ ] 图标 ARGB4444
+- [ ] 图标默认 ARGB4444；8888 仅当 MCP 合法编码且 scale=0
 - [ ] Item/Character/String（及脚本/服务端）齐套
 - [ ] UOL/_outlink 可解析或已烘焙
 - [ ] dirty 已全部 save

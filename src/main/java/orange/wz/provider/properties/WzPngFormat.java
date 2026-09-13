@@ -31,4 +31,21 @@ public enum WzPngFormat {
         log.warn("未知的图片压缩格式 {}", value);
         throw new RuntimeException("未知的图片压缩格式 " + value);
     }
+
+    /**
+     * v083 {@code IWzCanvas} 原生像素格式：4444 / 8888 / 565 / DXT3。
+     * ARGB1555、DXT5、BC7 是后期格式，打进 v083 会解不开。
+     */
+    public boolean isV083Native() {
+        return this == ARGB4444 || this == ARGB8888 || this == RGB565 || this == DXT3;
+    }
+
+    /** 仅 ARGB4444、RGB565 支持 magLevel/scale；8888 等必须 scale=0。 */
+    public boolean supportsScale() {
+        return this == ARGB4444 || this == RGB565;
+    }
+
+    public int coerceScale(int scale) {
+        return supportsScale() ? scale : 0;
+    }
 }

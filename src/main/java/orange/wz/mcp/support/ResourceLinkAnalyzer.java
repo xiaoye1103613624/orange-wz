@@ -185,13 +185,24 @@ public final class ResourceLinkAnalyzer {
             WzPngFormat fmt = canvas.getFormat();
             if (fmt != null) {
                 counters[fmt.ordinal()]++;
-                if (flagFormats.contains(fmt.name()) && flagged.size() < maxReport) {
+                boolean flagByFormat = flagFormats.contains(fmt.name());
+                boolean flagByScale = !fmt.supportsScale() && canvas.getScale() != 0;
+                if ((flagByFormat || flagByScale) && flagged.size() < maxReport) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("rootPath", NodePathResolver.rootPathOf(canvas));
                     row.put("nodePath", NodePathResolver.nodePathOf(canvas));
                     row.put("pngFormat", fmt.name());
                     row.put("width", canvas.getWidth());
                     row.put("height", canvas.getHeight());
+                    row.put("scale", canvas.getScale());
+                    List<String> reasons = new ArrayList<>();
+                    if (flagByFormat) {
+                        reasons.add(fmt.isV083Native() ? "flagged_format" : "unsupported_v083");
+                    }
+                    if (flagByScale) {
+                        reasons.add("scale_not_allowed");
+                    }
+                    row.put("reason", String.join(",", reasons));
                     flagged.add(row);
                 }
             }

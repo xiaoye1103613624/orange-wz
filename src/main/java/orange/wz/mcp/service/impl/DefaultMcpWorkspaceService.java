@@ -23,6 +23,7 @@ import orange.wz.provider.tools.wzkey.WzKey;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -638,7 +639,10 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
             WzObject start = resolver.resolveFromRoots(session.getRoots(), reference, autoParse);
             Set<String> flags = new HashSet<>();
             if (flagFormats == null || flagFormats.isEmpty()) {
-                flags.add(WzPngFormat.ARGB8888.name());
+                // v083 IWzCanvas 不认这些后期格式；合法 ARGB8888+scale=0 不标红。
+                flags.add(WzPngFormat.ARGB1555.name());
+                flags.add(WzPngFormat.DXT5.name());
+                flags.add(WzPngFormat.BC7.name());
             } else {
                 for (String f : flagFormats) {
                     if (f != null && !f.isBlank()) {
@@ -1346,7 +1350,7 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
                 yield op;
             }
             case "set_png" -> {
-                applySetPng(obj, stringValue(operation.get("base64Png")), optionalString(operation.get("pngFormat")));
+                applySetPng(obj, operation);
                 yield op;
             }
             case "set_sound" -> {
@@ -1402,7 +1406,10 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
                 if (base64Png != null) {
                     BufferedImage image = decodeBase64Png(base64Png);
                     WzPngFormat format = pngFormat == null || pngFormat.isBlank() ? prop.getFormat() : parsePngFormat(pngFormat);
-                    prop.setPng(image, format, prop.getScale());
+                    if (format == null) {
+                        format = WzPngFormat.ARGB4444;
+                    }
+                    prop.setPng(image, format, format.coerceScale(prop.getScale()));
                     markChanged(prop);
                 }
             }
@@ -1565,22 +1572,23 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         markChanged(prop);
     }
 
-    private void applySetPng(WzObject obj, String base64Png, String pngFormat) {
+    private void applySetPng(WzObject obj, Map<String, Object> operation) {
         if (!(obj instanceof WzCanvasProperty prop)) {
             throw new McpException("该节点类型不支持 set_png: " + obj.getClass().getSimpleName());
         }
-        BufferedImage image = decodeBase64Png(base64Png);
+        BufferedImage image = loadPngImage(
+                optionalString(operation.get("base64Png")),
+                optionalString(operation.get("filePath"))
+        );
+        String pngFormat = optionalString(operation.get("pngFormat"));
         WzPngFormat format;
         if (pngFormat == null || pngFormat.isBlank()) {
             format = prop.getFormat() != null ? prop.getFormat() : WzPngFormat.ARGB4444;
         } else {
             format = parsePngFormat(pngFormat);
         }
-        // v083 live client: ARGB8888 web injects historically caused CRC / bad-data boots.
-        if (format == WzPngFormat.ARGB8888) {
-            // Keep allowed when explicit, but prefer callers to pass ARGB4444 for inventory icons.
-        }
-        prop.setPng(image, format, prop.getScale());
+        // v083 同时支持 ARGB4444 与合法 ARGB8888（scale=0）。网页 PNG 未指定格式时仍默认 4444。
+        prop.setPng(image, format, format.coerceScale(prop.getScale()));
         markChanged(prop);
     }
 
@@ -1938,6 +1946,20 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         }
     }
 
+    private BufferedImage loadPngImage(String base64Png, String filePath) {
+        if (base64Png != null && !base64Png.isBlank()) {
+            return decodeBase64Png(base64Png);
+        }
+        if (filePath != null && !filePath.isBlank()) {
+            try {
+                return decodePngBytes(Files.readAllBytes(Path.of(filePath)));
+            } catch (IOException e) {
+                throw new McpException("读取 PNG 文件失败: " + filePath, e);
+            }
+        }
+        throw new McpException("set_png 需要 base64Png 或 filePath");
+    }
+
     private BufferedImage decodeBase64Png(String base64) {
         String pure = base64;
         int index = base64.indexOf(",");
@@ -1945,10 +1967,14 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
             pure = base64.substring(index + 1);
         }
         byte[] bytes = Base64.getDecoder().decode(pure);
+        return decodePngBytes(bytes);
+    }
+
+    private BufferedImage decodePngBytes(byte[] bytes) {
         try {
             return javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));
         } catch (Exception e) {
-            throw new McpException("png base64 解码失败", e);
+            throw new McpException("png 解码失败", e);
         }
     }
 

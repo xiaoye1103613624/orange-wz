@@ -68,7 +68,11 @@ public class WzPngProperty extends WzImageProperty {
 
     public void setImage(BufferedImage image, WzPngFormat format, int scale) {
         this.format = format;
-        this.scale = scale;
+        int coerced = format == null ? 0 : format.coerceScale(scale);
+        if (format != null && coerced != scale) {
+            log.warn("{} {} 不支持 scale={}，已强制为 0", getPath(), format, scale);
+        }
+        this.scale = coerced;
         this.image = image;
         compressImage();
     }
