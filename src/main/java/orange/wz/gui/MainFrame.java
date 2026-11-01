@@ -387,8 +387,11 @@ public class MainFrame extends JFrame {
 
                     final Gson gson = new Gson();
                     JsonObject json = gson.fromJson(response, JsonObject.class);
-                    JsonObject data = json.getAsJsonObject("data");
-                    JsonObject attributes = data.getAsJsonObject("attributes");
+                    JsonObject data = json == null ? null : json.getAsJsonObject("data");
+                    JsonObject attributes = data == null ? null : data.getAsJsonObject("attributes");
+                    if (attributes == null || !attributes.has("code") || !attributes.has("message")) {
+                        return null;
+                    }
 
                     int code = attributes.get("code").getAsInt();
                     String message = attributes.get("message").getAsString();

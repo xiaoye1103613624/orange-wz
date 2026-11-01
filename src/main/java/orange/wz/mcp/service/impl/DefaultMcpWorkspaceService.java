@@ -1062,6 +1062,10 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
     }
 
     private Map<String, Object> buildValueMatch(WzObject obj, String keyword) {
+        // 先判断是否命中，再计算 rootPath/nodePath（后者每层都要扫兄弟节点），否则全树遍历时开销被放大一个数量级
+        if (!valueMatches(obj, keyword)) {
+            return null;
+        }
         Map<String, Object> match = new HashMap<>();
         match.put("name", obj.getName());
         match.put("rootPath", NodePathResolver.rootPathOf(obj));
@@ -1070,50 +1074,38 @@ public final class DefaultMcpWorkspaceService implements McpWorkspaceService {
         match.put("matchedIn", "value");
 
         switch (obj) {
-            case WzStringProperty p -> {
-                if (!containsIgnoreCase(p.getValue(), keyword)) return null;
-                match.put("value", p.getValue());
-            }
-            case WzIntProperty p -> {
-                if (!containsIgnoreCase(String.valueOf(p.getValue()), keyword)) return null;
-                match.put("value", p.getValue());
-            }
-            case WzShortProperty p -> {
-                if (!containsIgnoreCase(String.valueOf(p.getValue()), keyword)) return null;
-                match.put("value", p.getValue());
-            }
-            case WzLongProperty p -> {
-                if (!containsIgnoreCase(String.valueOf(p.getValue()), keyword)) return null;
-                match.put("value", p.getValue());
-            }
-            case WzFloatProperty p -> {
-                if (!containsIgnoreCase(String.valueOf(p.getValue()), keyword)) return null;
-                match.put("value", p.getValue());
-            }
-            case WzDoubleProperty p -> {
-                if (!containsIgnoreCase(String.valueOf(p.getValue()), keyword)) return null;
-                match.put("value", p.getValue());
-            }
-            case WzUOLProperty p -> {
-                if (!containsIgnoreCase(p.getValue(), keyword)) return null;
-                match.put("value", p.getValue());
-            }
+            case WzStringProperty p -> match.put("value", p.getValue());
+            case WzIntProperty p -> match.put("value", p.getValue());
+            case WzShortProperty p -> match.put("value", p.getValue());
+            case WzLongProperty p -> match.put("value", p.getValue());
+            case WzFloatProperty p -> match.put("value", p.getValue());
+            case WzDoubleProperty p -> match.put("value", p.getValue());
+            case WzUOLProperty p -> match.put("value", p.getValue());
             case WzVectorProperty p -> {
-                String vectorText = p.getX() + "," + p.getY();
-                if (!(containsIgnoreCase(vectorText, keyword)
-                        || containsIgnoreCase(String.valueOf(p.getX()), keyword)
-                        || containsIgnoreCase(String.valueOf(p.getY()), keyword))) {
-                    return null;
-                }
                 match.put("x", p.getX());
                 match.put("y", p.getY());
-                match.put("value", vectorText);
+                match.put("value", p.getX() + "," + p.getY());
             }
             default -> {
-                return null;
             }
         }
         return match;
+    }
+
+    private boolean valueMatches(WzObject obj, String keyword) {
+        return switch (obj) {
+            case WzStringProperty p -> containsIgnoreCase(p.getValue(), keyword);
+            case WzIntProperty p -> containsIgnoreCase(String.valueOf(p.getValue()), keyword);
+            case WzShortProperty p -> containsIgnoreCase(String.valueOf(p.getValue()), keyword);
+            case WzLongProperty p -> containsIgnoreCase(String.valueOf(p.getValue()), keyword);
+            case WzFloatProperty p -> containsIgnoreCase(String.valueOf(p.getValue()), keyword);
+            case WzDoubleProperty p -> containsIgnoreCase(String.valueOf(p.getValue()), keyword);
+            case WzUOLProperty p -> containsIgnoreCase(p.getValue(), keyword);
+            case WzVectorProperty p -> containsIgnoreCase(p.getX() + "," + p.getY(), keyword)
+                    || containsIgnoreCase(String.valueOf(p.getX()), keyword)
+                    || containsIgnoreCase(String.valueOf(p.getY()), keyword);
+            default -> false;
+        };
     }
 
     private boolean containsIgnoreCase(String text, String keyword) {

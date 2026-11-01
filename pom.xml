@@ -138,7 +138,8 @@
                 </configuration>
                 <executions>
                     <execution>
-                        <phase>package</phase>
+                        <!-- 临时禁用加密，便于本地无密码启动 MCP：phase=none -->
+                        <phase>none</phase>
                         <goals>
                             <goal>classFinal</goal>
                         </goals>
@@ -184,8 +185,6 @@
                                         <include name="**/*"/>
                                     </fileset>
                                 </copy>
-                                <copy file="${project.build.directory}/${project.build.finalName}-encrypted.jar"
-                                      tofile="${project.build.directory}/${project.build.finalName}.jar"/>
                             </target>
                         </configuration>
                         <goals>

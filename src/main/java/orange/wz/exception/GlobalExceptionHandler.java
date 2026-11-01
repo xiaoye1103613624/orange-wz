@@ -3,7 +3,9 @@ package orange.wz.exception;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import orange.wz.model.ResultBody;
+import org.apache.catalina.connector.ClientAbortException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -53,6 +55,14 @@ public class GlobalExceptionHandler {
     public ResultBody<Object> exceptionHandler(HttpServletRequest req, NoResourceFoundException e) {
         log.error("请求资源不存在");
         return ResultBody.error(ExceptionEnum.NOT_FOUND);
+    }
+
+    /**
+     * 客户端主动断开（SSE 断连 / 请求取消）时响应已不可写，避免再向 text/event-stream 写 JSON 产生二次异常
+     */
+    @ExceptionHandler(value = {AsyncRequestNotUsableException.class, ClientAbortException.class})
+    public void clientGoneHandler(HttpServletRequest req, Exception e) {
+        log.debug("客户端连接已断开，忽略写回: {}", e.getMessage());
     }
 
     /**
